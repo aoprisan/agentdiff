@@ -1,13 +1,13 @@
 ---
 source: src/tui/mod.rs
-expression: render_to_string(&state)
+expression: render_to_string(&sample_state())
 ---
-"┌ Files ─────────────┐┌ Diff ────────────────────────────┐┌ Intent ────────────┐"
-"│(no changes yet)    ││(no diff loaded — Phase 1)        ││(no agent session — │"
-"│                    ││                                  ││                    │"
-"│                    ││                                  ││                    │"
-"│                    ││                                  ││                    │"
-"│                    ││                                  ││                    │"
+"┌ Files ─────────────┐┌ Diff — working tree vs HEAD (1 fi┐┌ Intent ────────────┐"
+"│▾ M src/main.rs  +1 ││▾ M src/main.rs  +1 -1            ││(no agent session — │"
+"│                    ││  @@ -1,2 +1,2 @@ fn main()       ││                    │"
+"│                    ││  1   fn main() {                 ││                    │"
+"│                    ││  2 -     let x = 1;              ││                    │"
+"│                    ││  2 +     let x = 2;              ││                    │"
 "│                    ││                                  ││                    │"
 "│                    ││                                  ││                    │"
 "│                    ││                                  ││                    │"
@@ -21,4 +21,4 @@ expression: render_to_string(&state)
 "│                    ││                                  ││                    │"
 "│                    ││                                  ││                    │"
 "└────────────────────┘└──────────────────────────────────┘└────────────────────┘"
-" agentdiff    q quit   ? help                                                   "
+" agentdiff   reviewed 0/1     a approve   x flag   ? help   q quit              "

@@ -1,0 +1,24 @@
+---
+source: src/tui/mod.rs
+expression: render_to_string(&state)
+---
+"┌ Files ─────────────┐┌ Diff — working tree vs HEAD (0 fi┐┌ Intent ────────────┐"
+"│(no changes)        ││  No changes in the working tree. ││(no agent session — │"
+"│                    ││                                  ││                    │"
+"│                    ││                                  ││                    │"
+"│                    ││                                  ││                    │"
+"│                    ││                                  ││                    │"
+"│                    ││                                  ││                    │"
+"│                    ││                                  ││                    │"
+"│                    ││                                  ││                    │"
+"│                    ││                                  ││                    │"
+"│                    ││                                  ││                    │"
+"│                    ││                                  ││                    │"
+"│                    ││                                  ││                    │"
+"│                    ││                                  ││                    │"
+"│                    ││                                  ││                    │"
+"│                    ││                                  ││                    │"
+"│                    ││                                  ││                    │"
+"│                    ││                                  ││                    │"
+"└────────────────────┘└──────────────────────────────────┘└────────────────────┘"
+" agentdiff   reviewed 0/0     a approve   x flag   ? help   q quit              "

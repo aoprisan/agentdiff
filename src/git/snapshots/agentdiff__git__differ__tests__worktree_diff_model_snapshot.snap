@@ -1,0 +1,280 @@
+---
+source: src/git/differ.rs
+expression: diff
+---
+{
+  "base": "WorkingTreeVsHead",
+  "files": [
+    {
+      "id": 0,
+      "path": "crlf.txt",
+      "old_path": null,
+      "change": "Added",
+      "is_binary": false,
+      "is_created": true,
+      "language": null,
+      "hunks": [
+        {
+          "href": {
+            "path": "crlf.txt",
+            "fingerprint": "[fingerprint]"
+          },
+          "old": {
+            "start": 0,
+            "count": 0
+          },
+          "new": {
+            "start": 1,
+            "count": 2
+          },
+          "header": "@@ -0,0 +1,2 @@",
+          "lines": [
+            {
+              "kind": "Added",
+              "old_no": null,
+              "new_no": 1,
+              "text": "first",
+              "intra": []
+            },
+            {
+              "kind": "Added",
+              "old_no": null,
+              "new_no": 2,
+              "text": "second",
+              "intra": []
+            }
+          ]
+        }
+      ],
+      "stats": [
+        2,
+        0
+      ]
+    },
+    {
+      "id": 1,
+      "path": "logo.bin",
+      "old_path": null,
+      "change": "Added",
+      "is_binary": true,
+      "is_created": true,
+      "language": null,
+      "hunks": [],
+      "stats": [
+        0,
+        0
+      ]
+    },
+    {
+      "id": 2,
+      "path": "modify.rs",
+      "old_path": null,
+      "change": "Modified",
+      "is_binary": false,
+      "is_created": false,
+      "language": "rust",
+      "hunks": [
+        {
+          "href": {
+            "path": "modify.rs",
+            "fingerprint": "[fingerprint]"
+          },
+          "old": {
+            "start": 1,
+            "count": 3
+          },
+          "new": {
+            "start": 1,
+            "count": 3
+          },
+          "header": "@@ -1,3 +1,3 @@",
+          "lines": [
+            {
+              "kind": "Context",
+              "old_no": 1,
+              "new_no": 1,
+              "text": "fn main() {",
+              "intra": []
+            },
+            {
+              "kind": "Removed",
+              "old_no": 2,
+              "new_no": null,
+              "text": "    let x = 1;",
+              "intra": [
+                {
+                  "start": 12,
+                  "end": 14,
+                  "changed": true
+                }
+              ]
+            },
+            {
+              "kind": "Added",
+              "old_no": null,
+              "new_no": 2,
+              "text": "    let x = 2;",
+              "intra": [
+                {
+                  "start": 12,
+                  "end": 14,
+                  "changed": true
+                }
+              ]
+            },
+            {
+              "kind": "Context",
+              "old_no": 3,
+              "new_no": 3,
+              "text": "}",
+              "intra": []
+            }
+          ]
+        }
+      ],
+      "stats": [
+        1,
+        1
+      ]
+    },
+    {
+      "id": 3,
+      "path": "new.py",
+      "old_path": null,
+      "change": "Added",
+      "is_binary": false,
+      "is_created": true,
+      "language": "python",
+      "hunks": [
+        {
+          "href": {
+            "path": "new.py",
+            "fingerprint": "[fingerprint]"
+          },
+          "old": {
+            "start": 0,
+            "count": 0
+          },
+          "new": {
+            "start": 1,
+            "count": 2
+          },
+          "header": "@@ -0,0 +1,2 @@",
+          "lines": [
+            {
+              "kind": "Added",
+              "old_no": null,
+              "new_no": 1,
+              "text": "def greet():",
+              "intra": []
+            },
+            {
+              "kind": "Added",
+              "old_no": null,
+              "new_no": 2,
+              "text": "    print('hi')",
+              "intra": []
+            }
+          ]
+        }
+      ],
+      "stats": [
+        2,
+        0
+      ]
+    },
+    {
+      "id": 4,
+      "path": "nonl.txt",
+      "old_path": null,
+      "change": "Added",
+      "is_binary": false,
+      "is_created": true,
+      "language": null,
+      "hunks": [
+        {
+          "href": {
+            "path": "nonl.txt",
+            "fingerprint": "[fingerprint]"
+          },
+          "old": {
+            "start": 0,
+            "count": 0
+          },
+          "new": {
+            "start": 1,
+            "count": 1
+          },
+          "header": "@@ -0,0 +1,1 @@",
+          "lines": [
+            {
+              "kind": "Added",
+              "old_no": null,
+              "new_no": 1,
+              "text": "no trailing newline",
+              "intra": []
+            }
+          ]
+        }
+      ],
+      "stats": [
+        1,
+        0
+      ]
+    },
+    {
+      "id": 5,
+      "path": "remove.txt",
+      "old_path": null,
+      "change": "Deleted",
+      "is_binary": false,
+      "is_created": false,
+      "language": null,
+      "hunks": [
+        {
+          "href": {
+            "path": "remove.txt",
+            "fingerprint": "[fingerprint]"
+          },
+          "old": {
+            "start": 1,
+            "count": 1
+          },
+          "new": {
+            "start": 0,
+            "count": 0
+          },
+          "header": "@@ -1 +0,0 @@",
+          "lines": [
+            {
+              "kind": "Removed",
+              "old_no": 1,
+              "new_no": null,
+              "text": "to be deleted",
+              "intra": []
+            }
+          ]
+        }
+      ],
+      "stats": [
+        0,
+        1
+      ]
+    },
+    {
+      "id": 6,
+      "path": "renamed.txt",
+      "old_path": "rename_me.txt",
+      "change": "Renamed",
+      "is_binary": false,
+      "is_created": false,
+      "language": null,
+      "hunks": [],
+      "stats": [
+        0,
+        0
+      ]
+    }
+  ],
+  "generated_at": "[ts]"
+}

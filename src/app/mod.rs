@@ -4,9 +4,11 @@
 mod commands;
 mod event;
 mod keymap;
+mod rows;
 mod state;
 mod update;
 
 pub use event::AppEvent;
-pub use state::{AppState, View};
+pub use rows::Row;
+pub use state::{AppState, View, file_collapsed};
 pub use update::update;
