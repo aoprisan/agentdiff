@@ -1,0 +1,68 @@
+---
+source: src/domain/diff.rs
+expression: sample_diff()
+---
+{
+  "base": "WorkingTreeVsHead",
+  "files": [
+    {
+      "id": 0,
+      "path": "src/lib.rs",
+      "old_path": null,
+      "change": "Modified",
+      "is_binary": false,
+      "is_created": false,
+      "language": "rust",
+      "hunks": [
+        {
+          "href": {
+            "path": "src/lib.rs",
+            "fingerprint": 42
+          },
+          "old": {
+            "start": 1,
+            "count": 1
+          },
+          "new": {
+            "start": 1,
+            "count": 1
+          },
+          "header": "@@ -1 +1 @@",
+          "lines": [
+            {
+              "kind": "Removed",
+              "old_no": 1,
+              "new_no": null,
+              "text": "let x = 1;",
+              "intra": [
+                {
+                  "start": 8,
+                  "end": 9,
+                  "changed": true
+                }
+              ]
+            },
+            {
+              "kind": "Added",
+              "old_no": null,
+              "new_no": 1,
+              "text": "let x = 2;",
+              "intra": [
+                {
+                  "start": 8,
+                  "end": 9,
+                  "changed": true
+                }
+              ]
+            }
+          ]
+        }
+      ],
+      "stats": [
+        1,
+        1
+      ]
+    }
+  ],
+  "generated_at": 1700000000000
+}

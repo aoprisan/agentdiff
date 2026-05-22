@@ -1,0 +1,7 @@
+/target
+
+# Local, machine-specific Claude Code settings
+.claude/settings.local.json
+
+# insta pending snapshots (review then accept; never commit the .new file)
+*.snap.new

@@ -1,0 +1,24 @@
+---
+source: src/tui/mod.rs
+expression: render_to_string(&state)
+---
+"┌ Files ─────────────┐┌ Diff ────────────────────────────┐┌ Intent ────────────┐"
+"│(no changes yet)    ││(no diff loaded — Phase 1)        ││(no agent session — │"
+"│                    ││                                  ││                    │"
+"│                    ││                                  ││                    │"
+"│                    ││                                  ││                    │"
+"│                    ││                                  ││                    │"
+"│                  ┌ Help ──────────────────────────────────┐                  │"
+"│                  │agentdiff — keys                        │                  │"
+"│                  │                                        │                  │"
+"│                  │  ?      toggle this help               │                  │"
+"│                  │  Esc    close overlay                  │                  │"
+"│                  │  q      quit                           │                  │"
+"│                  │                                        │                  │"
+"│                  │navigation & review keys arrive in later│                  │"
+"│                  └────────────────────────────────────────┘                  │"
+"│                    ││                                  ││                    │"
+"│                    ││                                  ││                    │"
+"│                    ││                                  ││                    │"
+"└────────────────────┘└──────────────────────────────────┘└────────────────────┘"
+" agentdiff    q quit   ? help                                                   "
