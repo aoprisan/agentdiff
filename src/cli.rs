@@ -34,4 +34,8 @@ pub struct Args {
     /// Ignore Claude Code session data; diff working tree vs HEAD (Phase 2).
     #[arg(long)]
     pub no_session: bool,
+
+    /// Copy this binary into a `bin` directory on your PATH and exit.
+    #[arg(long)]
+    pub install: bool,
 }
