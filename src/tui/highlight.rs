@@ -38,8 +38,10 @@ struct CacheKey {
     line: u32,
 }
 
+const DEFAULT_THEME: &str = "base16-ocean.dark";
+
 pub struct Highlighter {
-    theme_name: &'static str,
+    theme_name: String,
     cache: LruCache<CacheKey, Vec<HlSpan>>,
 }
 
@@ -51,10 +53,27 @@ impl Default for Highlighter {
 
 impl Highlighter {
     pub fn new() -> Self {
+        Self::with_theme(DEFAULT_THEME)
+    }
+
+    /// Build a highlighter using a named syntect theme, falling back to the
+    /// default if the name isn't a bundled theme.
+    pub fn with_theme(name: &str) -> Self {
+        let theme_name = if THEMES.themes.contains_key(name) {
+            name.to_string()
+        } else {
+            DEFAULT_THEME.to_string()
+        };
         Self {
-            theme_name: "base16-ocean.dark",
+            theme_name,
             cache: LruCache::new(NonZeroUsize::new(CACHE_CAPACITY).unwrap()),
         }
+    }
+
+    /// Drop all cached highlights. Called after a re-diff, where `(file, hunk,
+    /// line)` indices may now point at different content.
+    pub fn clear(&mut self) {
+        self.cache.clear();
     }
 
     /// Highlight one diff line, memoized by its position in the diff.
@@ -86,7 +105,7 @@ impl Highlighter {
         let syntax = ext
             .and_then(|e| SYNTAXES.find_syntax_by_extension(e))
             .unwrap_or_else(|| SYNTAXES.find_syntax_plain_text());
-        let theme = &THEMES.themes[self.theme_name];
+        let theme = &THEMES.themes[&self.theme_name];
         let mut hl = HighlightLines::new(syntax, theme);
 
         // syntect tokenizes line-at-a-time and wants the trailing newline.

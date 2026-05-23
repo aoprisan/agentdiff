@@ -15,6 +15,7 @@ mod error;
 mod git;
 mod session;
 mod tui;
+mod watch;
 
 use std::path::Path;
 

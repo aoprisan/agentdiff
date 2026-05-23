@@ -58,6 +58,65 @@ pub fn diff_worktree_vs_head(repo: &Repo) -> Result<Diff> {
     })
 }
 
+/// Build the staged diff (HEAD tree vs index) for `DiffBase::WorkingTreeVsIndex`.
+pub fn diff_worktree_vs_index(repo: &Repo) -> Result<Diff> {
+    let head_tree = repo.head_tree()?;
+    let mut opts = DiffOptions::new();
+    opts.ignore_submodules(true).context_lines(3);
+    let git_diff = repo
+        .inner()
+        .diff_tree_to_index(head_tree.as_ref(), None, Some(&mut opts))?;
+    collect_tree_diff(git_diff, DiffBase::WorkingTreeVsIndex)
+}
+
+/// Build a diff for an arbitrary `from..to` revision range.
+pub fn diff_range(repo: &Repo, from: &str, to: &str) -> Result<Diff> {
+    let from_tree = resolve_tree(repo, from)?;
+    let to_tree = resolve_tree(repo, to)?;
+    let mut opts = DiffOptions::new();
+    opts.ignore_submodules(true).context_lines(3);
+    let git_diff = repo.inner().diff_tree_to_tree(
+        Some(&from_tree),
+        Some(&to_tree),
+        Some(&mut opts),
+    )?;
+    collect_tree_diff(
+        git_diff,
+        DiffBase::Range {
+            from: from.to_string(),
+            to: to.to_string(),
+        },
+    )
+}
+
+fn resolve_tree<'r>(repo: &'r Repo, rev: &str) -> Result<git2::Tree<'r>> {
+    Ok(repo.inner().revparse_single(rev)?.peel_to_tree()?)
+}
+
+/// Shared tail for the tree-based diffs (staged, range): rename detection, map
+/// deltas to `FileChange`s, sort, and assign ids.
+fn collect_tree_diff(mut git_diff: git2::Diff<'_>, base: DiffBase) -> Result<Diff> {
+    let mut find = DiffFindOptions::new();
+    find.renames(true).copies(true);
+    git_diff.find_similar(Some(&mut find))?;
+
+    let mut files = Vec::new();
+    for idx in 0..git_diff.deltas().len() {
+        if let Some(file) = file_change(&git_diff, idx)? {
+            files.push(file);
+        }
+    }
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    for (i, file) in files.iter_mut().enumerate() {
+        file.id = FileId(i as u32);
+    }
+    Ok(Diff {
+        base,
+        files,
+        generated_at: Timestamp::now(),
+    })
+}
+
 /// Convert one delta (with its patch) into a `FileChange`, or `None` for deltas
 /// we don't surface (unmodified, ignored, untracked — handled elsewhere).
 fn file_change(git_diff: &git2::Diff<'_>, idx: usize) -> Result<Option<FileChange>> {
@@ -627,5 +686,57 @@ mod tests {
             ".generated_at" => "[ts]",
             ".files[].hunks[].href.fingerprint" => "[fingerprint]",
         });
+    }
+
+    #[test]
+    fn staged_diff_shows_only_index_changes() {
+        // fixture_repo stages a rename and leaves modify.rs unstaged.
+        let dir = fixture_repo();
+        let repo = Repo::discover(dir.path()).unwrap();
+        let diff = diff_worktree_vs_index(&repo).unwrap();
+        assert_eq!(diff.base, DiffBase::WorkingTreeVsIndex);
+
+        assert_eq!(find(&diff, "renamed.txt").change, ChangeKind::Renamed);
+        // The unstaged working-tree modification must not appear in the staged diff.
+        assert!(!diff.files.iter().any(|f| f.path == Path::new("modify.rs")));
+    }
+
+    #[test]
+    fn range_diff_compares_two_revisions() {
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        let sig = Signature::now("Test", "test@example.com").unwrap();
+
+        write(dir.path(), "f.txt", b"one\ntwo\nthree\n");
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("f.txt")).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let c1 = repo
+            .commit(Some("HEAD"), &sig, &sig, "first", &tree, &[])
+            .unwrap();
+
+        write(dir.path(), "f.txt", b"one\nTWO\nthree\n");
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("f.txt")).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let parent = repo.find_commit(c1).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "second", &tree, &[&parent])
+            .unwrap();
+
+        let repo = Repo::discover(dir.path()).unwrap();
+        let diff = diff_range(&repo, "HEAD~1", "HEAD").unwrap();
+
+        assert_eq!(
+            diff.base,
+            DiffBase::Range {
+                from: "HEAD~1".into(),
+                to: "HEAD".into()
+            }
+        );
+        let f = find(&diff, "f.txt");
+        assert_eq!(f.change, ChangeKind::Modified);
+        assert_eq!(f.stats, (1, 1));
     }
 }

@@ -1,25 +1,66 @@
-use ratatui::crossterm::event::Event;
+use ratatui::crossterm::event::{Event, KeyCode, KeyEventKind};
 
 use crate::domain::review::HunkVerdict;
 
 use super::commands::Command;
-use super::keymap::{Resolved, resolve};
+use super::keymap::Resolved;
 use super::rows;
+use super::state::NoteEdit;
 use super::{AppEvent, AppState};
 
-/// The single place `AppState` is mutated. Long-running side effects (live
-/// re-diff, session parsing) will be requested from here in later phases.
+/// The single place `AppState` is mutated for input/tick. Filesystem and
+/// re-diff events are handled in the run loop, which owns the channels.
 pub fn update(state: &mut AppState, event: AppEvent) {
     match event {
-        AppEvent::Input(Event::Key(key)) => match resolve(key, state.pending_key) {
-            Resolved::Pending(leader) => state.pending_key = Some(leader),
-            Resolved::Command(command) => {
-                state.pending_key = None;
-                apply(state, command);
+        AppEvent::Input(Event::Key(key)) => {
+            // While editing a note, keystrokes are text, not commands.
+            if state.note_edit.is_some() {
+                edit_note_key(state, key);
+                return;
             }
-        },
+            match state.keymap.resolve(key, state.pending_key) {
+                Resolved::Pending(leader) => state.pending_key = Some(leader),
+                Resolved::Command(command) => {
+                    state.pending_key = None;
+                    apply(state, command);
+                }
+            }
+        }
         AppEvent::Input(_) => {}
         AppEvent::Tick => {}
+        // Filesystem / re-diff events are driven by the run loop, not the reducer.
+        AppEvent::FsChanged | AppEvent::DiffReady { .. } => {}
+    }
+}
+
+/// Route a keypress into the active note editor.
+fn edit_note_key(state: &mut AppState, key: ratatui::crossterm::event::KeyEvent) {
+    if key.kind != KeyEventKind::Press {
+        return;
+    }
+    let Some(edit) = state.note_edit.as_mut() else {
+        return;
+    };
+    match key.code {
+        KeyCode::Esc => state.note_edit = None,
+        KeyCode::Enter => commit_note(state),
+        KeyCode::Backspace => {
+            edit.buffer.pop();
+        }
+        KeyCode::Char(c) => edit.buffer.push(c),
+        _ => {}
+    }
+}
+
+fn commit_note(state: &mut AppState) {
+    if let Some(edit) = state.note_edit.take() {
+        let trimmed = edit.buffer.trim();
+        if trimmed.is_empty() {
+            state.review.notes.remove(&edit.href);
+        } else {
+            state.review.notes.insert(edit.href, trimmed.to_string());
+        }
+        state.review_dirty = true;
     }
 }
 
@@ -76,9 +117,20 @@ fn apply(state: &mut AppState, command: Command) {
         Command::Approve => set_verdict(state, HunkVerdict::Approved),
         Command::NeedsAttention => set_verdict(state, HunkVerdict::NeedsAttention),
         Command::Unset => set_verdict(state, HunkVerdict::Unreviewed),
+        Command::EditNote => open_note_editor(state),
 
         Command::Noop => {}
     }
+}
+
+/// Open the note editor for the hunk under the cursor, seeded with any existing
+/// note.
+fn open_note_editor(state: &mut AppState) {
+    let Some(href) = state.current_hunk_ref() else {
+        return;
+    };
+    let buffer = state.review.notes.get(&href).cloned().unwrap_or_default();
+    state.note_edit = Some(NoteEdit { href, buffer });
 }
 
 fn move_cursor(state: &mut AppState, to: usize) {

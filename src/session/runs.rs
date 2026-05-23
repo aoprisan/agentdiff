@@ -116,7 +116,10 @@ pub fn segment(records: &[Record]) -> Segmentation {
         }
     }
 
-    if let Some(run) = open.take() {
+    // A run still open at end-of-transcript was never closed by a non-autonomous
+    // turn, so the agent is (as of this read) still running it: mark it live.
+    if let Some(mut run) = open.take() {
+        run.ended = None;
         out.runs.push(run);
     }
     out
@@ -177,5 +180,17 @@ mod tests {
         let jsonl = r#"{"type":"user","uuid":"u1","permissionMode":"default","message":{"content":"hi"}}"#;
         let seg = segment(&parse_reader(jsonl.as_bytes()));
         assert!(seg.runs.is_empty());
+    }
+
+    #[test]
+    fn run_open_at_end_of_transcript_is_live() {
+        // Enters acceptEdits and never returns to a non-autonomous turn → live.
+        let jsonl = r#"
+{"type":"user","uuid":"u1","permissionMode":"acceptEdits","timestamp":"2026-01-01T00:00:00Z","message":{"content":"go"}}
+{"type":"assistant","uuid":"a1","parentUuid":"u1","timestamp":"2026-01-01T00:00:05Z","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/repo/a.rs"}}]}}
+"#;
+        let seg = segment(&parse_reader(jsonl.as_bytes()));
+        assert_eq!(seg.runs.len(), 1);
+        assert!(seg.runs[0].ended.is_none(), "open run should be live");
     }
 }

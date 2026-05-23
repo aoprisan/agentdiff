@@ -5,6 +5,7 @@ use crate::domain::diff::Diff;
 use crate::domain::review::{HunkRef, HunkVerdict, ReviewState};
 use crate::domain::session::Intent;
 
+use super::keymap::Keymap;
 use super::rows::{self, FlatDiff, Row};
 use crate::session::intent::IntentMap;
 
@@ -18,10 +19,21 @@ pub enum View {
 /// Header metadata for the loaded session, shown above the intent panel.
 #[derive(Debug, Clone, Default)]
 pub struct SessionSummary {
+    /// Session id, used to locate the transcript to watch for live updates.
+    pub id: String,
     pub title: Option<String>,
     pub last_prompt: Option<String>,
     /// Human label for the diff base, e.g. "agent run 2" or "working tree".
     pub base_label: String,
+    /// The selected run is still in progress (no closing turn yet).
+    pub live: bool,
+}
+
+/// In-progress per-hunk note edit (a tiny modal input).
+#[derive(Debug, Clone)]
+pub struct NoteEdit {
+    pub href: HunkRef,
+    pub buffer: String,
 }
 
 /// One row in the session picker.
@@ -77,6 +89,15 @@ pub struct AppState {
     pub picker_cursor: usize,
     /// Set when the user selects a different session; the run loop reloads it.
     pub pending_switch: Option<String>,
+
+    // --- Live re-diff & notes (Phase 3) ---
+    /// Bumps on each re-diff request; a `DiffReady` with a stale generation is
+    /// dropped so superseded background diffs never clobber newer state.
+    pub generation: u64,
+    /// Active per-hunk note editor, or `None`.
+    pub note_edit: Option<NoteEdit>,
+    /// Key bindings (defaults + config overrides).
+    pub keymap: Keymap,
 }
 
 impl AppState {
@@ -102,7 +123,55 @@ impl AppState {
             show_picker: false,
             picker_cursor: 0,
             pending_switch: None,
+            generation: 0,
+            note_edit: None,
+            keymap: Keymap::default(),
         }
+    }
+
+    /// `HunkRef` under the cursor (a hunk header or one of its lines), used to
+    /// re-anchor the cursor across a live re-diff and to target note edits.
+    pub fn current_hunk_ref(&self) -> Option<HunkRef> {
+        let (fi, hi) = self.current_row()?.hunk()?;
+        Some(self.diff.files[fi].hunks[hi].href.clone())
+    }
+
+    /// Swap in a freshly built diff/intent/session, re-anchoring the cursor to
+    /// the same logical hunk (by fingerprint) when it survives the re-diff.
+    /// Verdicts and notes re-attach automatically via their `HunkRef` keys.
+    pub fn apply_rediff(
+        &mut self,
+        diff: Diff,
+        intent: IntentMap,
+        session: Option<SessionSummary>,
+        sessions: Vec<SessionListItem>,
+    ) {
+        let anchor = self.current_hunk_ref();
+        self.diff = diff;
+        self.intent = intent;
+        self.session = session;
+        // Preserve the picker's current-session marker across the swap.
+        if !sessions.is_empty() {
+            self.sessions = sessions;
+        }
+        self.rebuild_flat();
+        if let Some(href) = anchor
+            && let Some(row) = self.row_for_hunk(&href)
+        {
+            self.cursor = row;
+        }
+        self.ensure_cursor_visible();
+    }
+
+    /// First flattened row belonging to the hunk with this `HunkRef`.
+    fn row_for_hunk(&self, href: &HunkRef) -> Option<usize> {
+        (0..self.flat.len()).find(|&i| {
+            self.flat
+                .get(i)
+                .and_then(|r| r.hunk())
+                .and_then(|(fi, hi)| self.diff.files.get(fi)?.hunks.get(hi))
+                .is_some_and(|h| &h.href == href)
+        })
     }
 
     /// The agent's intent for the file under the cursor, if any.
@@ -197,4 +266,76 @@ pub fn file_collapsed(state: &AppState, file_idx: usize) -> bool {
         .get(file_idx)
         .map(|f| rows::is_collapsed(f, &state.review))
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::Timestamp;
+    use crate::domain::diff::{
+        ChangeKind, Diff, DiffBase, FileChange, FileId, Hunk, Line, LineKind, LineRange,
+    };
+
+    fn hunk(path: &str, fp: u64, text: &str) -> Hunk {
+        Hunk {
+            href: HunkRef {
+                path: path.into(),
+                fingerprint: fp,
+            },
+            old: LineRange { start: 0, count: 0 },
+            new: LineRange { start: 1, count: 1 },
+            header: format!("@@ {fp} @@"),
+            lines: vec![Line {
+                kind: LineKind::Added,
+                old_no: None,
+                new_no: Some(1),
+                text: text.into(),
+                intra: Vec::new(),
+            }],
+        }
+    }
+
+    fn diff_with(hunks: Vec<Hunk>) -> Diff {
+        Diff {
+            base: DiffBase::WorkingTreeVsHead,
+            generated_at: Timestamp::from_millis(0),
+            files: vec![FileChange {
+                id: FileId(0),
+                path: "a.rs".into(),
+                old_path: None,
+                change: ChangeKind::Modified,
+                is_binary: false,
+                is_created: false,
+                language: Some("rust".into()),
+                hunks,
+                stats: (0, 0),
+            }],
+        }
+    }
+
+    #[test]
+    fn rediff_reanchors_cursor_and_keeps_verdict() {
+        let h1 = hunk("a.rs", 11, "first");
+        let h2 = hunk("a.rs", 22, "second");
+        let mut state = AppState::new(
+            diff_with(vec![h1.clone(), h2.clone()]),
+            ReviewState::default(),
+            PathBuf::from("/tmp/r.toml"),
+        );
+        state.viewport_height = 100;
+
+        // Park the cursor on the second hunk and approve it.
+        state.cursor = state.row_for_hunk(&h2.href).unwrap();
+        state.review.set_verdict(h2.href.clone(), HunkVerdict::Approved);
+
+        // A re-diff prepends a new hunk (h2 shifts down) but keeps h2 unchanged.
+        let h0 = hunk("a.rs", 99, "inserted");
+        let new_diff = diff_with(vec![h0, h1, h2.clone()]);
+        state.apply_rediff(new_diff, IntentMap::new(), None, Vec::new());
+
+        // Cursor stays on the same logical hunk; its verdict survives.
+        assert_eq!(state.current_hunk_ref(), Some(h2.href.clone()));
+        assert_eq!(state.review.verdict(&h2.href), HunkVerdict::Approved);
+        assert_eq!(state.counts().reviewed, 1);
+    }
 }

@@ -23,11 +23,32 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     lines.extend(header(state));
     lines.push(Line::from(""));
     lines.extend(body(state));
+    lines.extend(note_section(state));
 
     frame.render_widget(
         Paragraph::new(lines).wrap(Wrap { trim: false }),
         inner,
     );
+}
+
+/// The reviewer's own note for the current hunk, when one exists.
+fn note_section(state: &AppState) -> Vec<Line<'static>> {
+    let Some(href) = state.current_hunk_ref() else {
+        return Vec::new();
+    };
+    let Some(note) = state.review.notes.get(&href) else {
+        return Vec::new();
+    };
+    vec![
+        Line::from(""),
+        Line::styled(
+            "NOTE",
+            Style::default()
+                .fg(theme::NEEDS_ATTENTION_FG)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Line::raw(note.clone()),
+    ]
 }
 
 fn header(state: &AppState) -> Vec<Line<'static>> {
@@ -48,10 +69,21 @@ fn header(state: &AppState) -> Vec<Line<'static>> {
         title,
         Style::default().add_modifier(Modifier::BOLD),
     ));
-    lines.push(Line::styled(
+
+    let mut base = vec![Span::styled(
         session.base_label.clone(),
         Style::default().fg(theme::HUNK_HEADER_FG),
-    ));
+    )];
+    if session.live {
+        base.push(Span::raw("  "));
+        base.push(Span::styled(
+            "● live",
+            Style::default()
+                .fg(theme::REMOVED_FG)
+                .add_modifier(Modifier::BOLD),
+        ));
+    }
+    lines.push(Line::from(base));
     lines
 }
 
@@ -108,10 +140,10 @@ fn why_line(confidence: f32) -> Line<'static> {
         Span::styled(
             "WHY ",
             Style::default()
-                .fg(theme::APPROVED_FG)
+                .fg(theme::intent_fg())
                 .add_modifier(Modifier::BOLD),
         ),
-        Span::styled(meter, Style::default().fg(theme::APPROVED_FG)),
+        Span::styled(meter, Style::default().fg(theme::intent_fg())),
         Span::styled(format!(" {pct}%"), Style::default().fg(theme::GUTTER_FG)),
     ])
 }

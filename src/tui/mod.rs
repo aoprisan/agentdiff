@@ -11,17 +11,23 @@ use std::thread;
 use std::time::Duration;
 
 use anyhow::Context;
-use crossbeam_channel::{RecvTimeoutError, unbounded};
+use crossbeam_channel::{Receiver, RecvTimeoutError, Sender, unbounded};
 use ratatui::Frame;
 use ratatui::crossterm::event;
 use ratatui::layout::Rect;
 
-use crate::app::{self, AppEvent, AppState, Selectors, View, update};
+use crate::app::{self, AppEvent, AppState, Keymap, Selectors, View, update};
 use crate::cli::Args;
-use crate::config;
+use crate::config::{self, ThemeConfig};
 use crate::git::Repo;
 use crate::session::locate;
 use highlight::Highlighter;
+
+/// A request to the background re-diff worker.
+struct DiffRequest {
+    generation: u64,
+    selectors: Selectors,
+}
 
 /// Build the diff/review/session state, then run the panic-safe terminal loop,
 /// always restoring the terminal — including on panic — and persisting verdicts.
@@ -33,21 +39,26 @@ pub fn run(args: Args, state_dir: PathBuf) -> anyhow::Result<()> {
         .with_context(|| format!("opening a git repository at {}", start.display()))?;
     let claude_dir = locate::default_claude_dir();
 
+    // User config: theme colors are global; the syntax theme and keymap are
+    // threaded through so they survive a session switch.
+    let config = config::load_config();
+    theme::set_overrides(theme_overrides(&config.theme));
+    let keymap = Keymap::from_overrides(&config.keys);
+    let syntax_theme = config.theme.syntax.clone().unwrap_or_default();
+
     let selectors = Selectors {
         no_session: args.no_session,
-        session_id: args.session.as_deref(),
+        session_id: args.session,
         run_index: args.run,
+        range: args.range.as_deref().map(parse_range),
+        staged: args.staged,
     };
     let mut state = app::build_state(&repo, &state_dir, claude_dir.as_deref(), &selectors)?;
-    tracing::info!(
-        files = state.diff.files.len(),
-        base = ?state.diff.base,
-        "built initial review state"
-    );
+    state.keymap = keymap.clone();
 
     install_panic_hook();
     let mut terminal = ratatui::init();
-    let mut highlighter = Highlighter::new();
+    let mut highlighter = Highlighter::with_theme(&syntax_theme);
     let result = event_loop(
         &mut terminal,
         &mut state,
@@ -55,6 +66,9 @@ pub fn run(args: Args, state_dir: PathBuf) -> anyhow::Result<()> {
         &repo,
         &state_dir,
         claude_dir.as_deref(),
+        selectors,
+        keymap,
+        syntax_theme,
     );
     ratatui::restore();
 
@@ -63,6 +77,7 @@ pub fn run(args: Args, state_dir: PathBuf) -> anyhow::Result<()> {
     result
 }
 
+#[allow(clippy::too_many_arguments)]
 fn event_loop(
     terminal: &mut ratatui::DefaultTerminal,
     state: &mut AppState,
@@ -70,18 +85,33 @@ fn event_loop(
     repo: &Repo,
     state_dir: &Path,
     claude_dir: Option<&Path>,
+    initial_selectors: Selectors,
+    keymap: Keymap,
+    syntax_theme: String,
 ) -> anyhow::Result<()> {
     let (tx, rx) = unbounded::<AppEvent>();
 
     // Blocking input reads live on their own thread. When the loop drops `rx`,
     // the next `send` fails and this thread exits.
-    thread::spawn(move || {
-        while let Ok(ev) = event::read() {
-            if tx.send(AppEvent::Input(ev)).is_err() {
-                break;
+    {
+        let tx = tx.clone();
+        thread::spawn(move || {
+            while let Ok(ev) = event::read() {
+                if tx.send(AppEvent::Input(ev)).is_err() {
+                    break;
+                }
             }
-        }
-    });
+        });
+    }
+
+    // Background re-diff worker: opens its own (non-Send) repo handle and rebuilds
+    // the diff bundle on demand, tagging each result with its request generation.
+    let (req_tx, req_rx) = unbounded::<DiffRequest>();
+    spawn_worker(repo.workdir().to_path_buf(), claude_dir.map(Path::to_path_buf), req_rx, tx.clone());
+
+    let mut selectors = initial_selectors;
+    // Watch the tree + active transcript; the guard must outlive the loop.
+    let mut _watch = spawn_watch(state, claude_dir, repo.workdir(), tx.clone());
 
     while !state.should_quit {
         // Refresh the diff-pane height so paging/scrolling matches what's drawn.
@@ -91,41 +121,132 @@ fn event_loop(
             state.ensure_cursor_visible();
         }
         terminal.draw(|frame| render(frame, state, highlighter))?;
+
         match rx.recv_timeout(Duration::from_millis(33)) {
+            Ok(AppEvent::FsChanged) => {
+                state.generation += 1;
+                let _ = req_tx.send(DiffRequest {
+                    generation: state.generation,
+                    selectors: selectors.clone(),
+                });
+            }
+            Ok(AppEvent::DiffReady { generation, bundle }) => {
+                if generation == state.generation {
+                    let bundle = *bundle;
+                    state.apply_rediff(bundle.diff, bundle.intent, bundle.session, bundle.sessions);
+                    // Indices changed, so cached highlights may be stale.
+                    highlighter.clear();
+                }
+            }
             Ok(ev) => update(state, ev),
             Err(RecvTimeoutError::Timeout) => update(state, AppEvent::Tick),
             Err(RecvTimeoutError::Disconnected) => break,
         }
+
         if let Some(id) = state.pending_switch.take() {
-            switch_session(state, highlighter, repo, state_dir, claude_dir, &id);
+            switch_session(state, repo, state_dir, claude_dir, &mut selectors, id);
+            // Reapply config that lives outside the rebuilt AppState / Highlighter.
+            state.keymap = keymap.clone();
+            *highlighter = Highlighter::with_theme(&syntax_theme);
+            _watch = spawn_watch(state, claude_dir, repo.workdir(), tx.clone());
         }
     }
     Ok(())
 }
 
-/// Reload the review state for a different session picked in the picker. The
-/// outgoing session's verdicts are persisted first; the highlight cache is reset
-/// because file ids change across diffs.
+/// Build theme color overrides from config (`#rrggbb` strings → colors).
+fn theme_overrides(theme_config: &ThemeConfig) -> theme::Overrides {
+    theme::Overrides {
+        added: theme_config.added.as_deref().and_then(theme::parse_color),
+        removed: theme_config.removed.as_deref().and_then(theme::parse_color),
+        intent: theme_config.intent.as_deref().and_then(theme::parse_color),
+    }
+}
+
+fn spawn_worker(
+    workdir: PathBuf,
+    claude_dir: Option<PathBuf>,
+    req_rx: Receiver<DiffRequest>,
+    tx: Sender<AppEvent>,
+) {
+    thread::spawn(move || {
+        let repo = match Repo::discover(&workdir) {
+            Ok(repo) => repo,
+            Err(e) => {
+                tracing::warn!(error = %e, "re-diff worker could not open repo; live updates disabled");
+                return;
+            }
+        };
+        while let Ok(req) = req_rx.recv() {
+            match app::build_bundle(&repo, claude_dir.as_deref(), &req.selectors) {
+                Ok(bundle) => {
+                    let event = AppEvent::DiffReady {
+                        generation: req.generation,
+                        bundle: Box::new(bundle),
+                    };
+                    if tx.send(event).is_err() {
+                        break;
+                    }
+                }
+                Err(e) => tracing::warn!(error = %e, "background re-diff failed"),
+            }
+        }
+    });
+}
+
+fn spawn_watch(
+    state: &AppState,
+    claude_dir: Option<&Path>,
+    workdir: &Path,
+    tx: Sender<AppEvent>,
+) -> Option<crate::watch::Watch> {
+    let session_file = active_session_file(state, claude_dir, workdir);
+    crate::watch::spawn(workdir, session_file, tx)
+}
+
+fn active_session_file(
+    state: &AppState,
+    claude_dir: Option<&Path>,
+    workdir: &Path,
+) -> Option<PathBuf> {
+    let id = state.session.as_ref()?.id.as_str();
+    locate::find_session(claude_dir?, workdir, id).map(|e| e.path)
+}
+
+/// Reload review state for a different session picked in the picker, and point
+/// future re-diffs at it. The outgoing verdicts are persisted first; the caller
+/// reapplies keymap/highlighter (which live outside the rebuilt `AppState`).
 fn switch_session(
     state: &mut AppState,
-    highlighter: &mut Highlighter,
     repo: &Repo,
     state_dir: &Path,
     claude_dir: Option<&Path>,
-    session_id: &str,
+    selectors: &mut Selectors,
+    session_id: String,
 ) {
     save_review(state);
-    let selectors = Selectors {
+    *selectors = Selectors {
         no_session: false,
-        session_id: Some(session_id),
+        session_id: Some(session_id.clone()),
         run_index: None,
+        range: None,
+        staged: false,
     };
-    match app::build_state(repo, state_dir, claude_dir, &selectors) {
-        Ok(new_state) => {
-            *state = new_state;
-            *highlighter = Highlighter::new();
-        }
+    match app::build_state(repo, state_dir, claude_dir, selectors) {
+        Ok(new_state) => *state = new_state,
         Err(e) => tracing::warn!(error = %e, session = session_id, "failed to switch session"),
+    }
+}
+
+/// Parse a `--range` argument into `(from, to)`, defaulting the missing side to
+/// `HEAD` (so `HEAD~3` means `HEAD~3..HEAD`).
+fn parse_range(range: &str) -> (String, String) {
+    match range.split_once("..") {
+        Some((from, to)) => (
+            if from.is_empty() { "HEAD" } else { from }.to_string(),
+            if to.is_empty() { "HEAD" } else { to }.to_string(),
+        ),
+        None => (range.to_string(), "HEAD".to_string()),
     }
 }
 
@@ -141,7 +262,9 @@ fn render(frame: &mut Frame, state: &AppState, highlighter: &mut Highlighter) {
     match state.view {
         View::Review => render_review(frame, state, highlighter),
     }
-    if state.show_picker {
+    if state.note_edit.is_some() {
+        widgets::notes::render(frame, frame.area(), state);
+    } else if state.show_picker {
         widgets::session_picker::render(frame, frame.area(), state);
     } else if state.show_help {
         widgets::help::render(frame, frame.area());
@@ -296,9 +419,11 @@ mod tests {
 
         let mut state = sample_state();
         state.session = Some(SessionSummary {
+            id: "11111111-aaaa".into(),
             title: Some("Add greeting, fix off-by-one".into()),
             last_prompt: Some("thanks".into()),
             base_label: "agent run 1/1 (acceptEdits)".into(),
+            live: true,
         });
         state.intent.insert(
             PathBuf::from("src/main.rs"),
@@ -309,6 +434,19 @@ mod tests {
                 confidence: 0.9,
             },
         );
+        insta::assert_snapshot!(render_to_string(&state));
+    }
+
+    #[test]
+    fn renders_note_editor() {
+        use crate::app::state::NoteEdit;
+
+        let mut state = sample_state();
+        let href = state.diff.files[0].hunks[0].href.clone();
+        state.note_edit = Some(NoteEdit {
+            href,
+            buffer: "double-check the off-by-one".into(),
+        });
         insta::assert_snapshot!(render_to_string(&state));
     }
 

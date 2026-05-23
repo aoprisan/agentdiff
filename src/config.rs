@@ -3,12 +3,14 @@
 //! Phase 0 only needs a state directory and a log file path; later phases add
 //! the persisted review-state file and the config (keymap/theme) loader here.
 
+use std::collections::HashMap;
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use directories::ProjectDirs;
+use serde::Deserialize;
 
 use crate::domain::diff::DiffBase;
 use crate::domain::review::ReviewState;
@@ -69,6 +71,51 @@ pub fn load_review_state(path: &Path) -> ReviewState {
         tracing::warn!(path = %path.display(), error = %e, "could not parse review state; starting fresh");
         ReviewState::default()
     })
+}
+
+/// User configuration from `~/.config/agentdiff/config.toml`. Everything is
+/// optional; missing/unreadable config falls back to built-in defaults.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct Config {
+    #[serde(default)]
+    pub theme: ThemeConfig,
+    /// `command-name → key` overrides, e.g. `approve = "v"`.
+    #[serde(default)]
+    pub keys: HashMap<String, String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ThemeConfig {
+    /// syntect theme name (e.g. "base16-ocean.dark", "InspiredGitHub").
+    pub syntax: Option<String>,
+    /// `#rrggbb` overrides for the add / remove / intent foregrounds.
+    pub added: Option<String>,
+    pub removed: Option<String>,
+    pub intent: Option<String>,
+}
+
+/// Path to the user config file, if a config directory can be resolved.
+pub fn config_path() -> Option<PathBuf> {
+    ProjectDirs::from("dev", "agentdiff", "agentdiff")
+        .map(|dirs| dirs.config_dir().join("config.toml"))
+}
+
+/// Load user config, or defaults when the file is absent or unparseable.
+pub fn load_config() -> Config {
+    let Some(path) = config_path() else {
+        return Config::default();
+    };
+    match fs::read_to_string(&path) {
+        Ok(contents) => toml::from_str(&contents).unwrap_or_else(|e| {
+            tracing::warn!(path = %path.display(), error = %e, "invalid config.toml; using defaults");
+            Config::default()
+        }),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Config::default(),
+        Err(e) => {
+            tracing::warn!(path = %path.display(), error = %e, "could not read config.toml");
+            Config::default()
+        }
+    }
 }
 
 /// Persist review state as human-diffable TOML.

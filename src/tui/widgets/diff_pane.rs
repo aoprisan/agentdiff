@@ -132,7 +132,7 @@ fn collapsed_summary(file: &FileChange) -> Line<'static> {
 fn hunk_header(state: &AppState, file: usize, hunk: usize) -> Line<'static> {
     let h = &state.diff.files[file].hunks[hunk];
     let (marker, marker_color) = verdict_marker(state.review.verdict(&h.href));
-    Line::from(vec![
+    let mut spans = vec![
         Span::styled(
             format!("{marker} "),
             Style::default().fg(marker_color).add_modifier(Modifier::BOLD),
@@ -141,7 +141,14 @@ fn hunk_header(state: &AppState, file: usize, hunk: usize) -> Line<'static> {
             h.header.clone(),
             Style::default().fg(theme::HUNK_HEADER_FG),
         ),
-    ])
+    ];
+    if state.review.notes.contains_key(&h.href) {
+        spans.push(Span::styled(
+            "  ✎",
+            Style::default().fg(theme::NEEDS_ATTENTION_FG),
+        ));
+    }
+    Line::from(spans)
 }
 
 fn diff_line(
@@ -207,8 +214,8 @@ fn text_spans(
         LineKind::Context => theme::CURSOR_BG,
     };
     let default_fg = match kind {
-        LineKind::Added => theme::ADDED_FG,
-        LineKind::Removed => theme::REMOVED_FG,
+        LineKind::Added => theme::added_fg(),
+        LineKind::Removed => theme::removed_fg(),
         LineKind::Context => Color::Reset,
     };
 

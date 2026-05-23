@@ -1,6 +1,7 @@
 //! Composition root for a review session: open the repo, choose a diff base
-//! (latest agent run vs. working-tree fallback), build the diff, recover intent,
-//! and load persisted verdicts into a ready-to-render [`AppState`].
+//! (range / staged / latest agent run / working-tree fallback), build the diff,
+//! recover intent, and load persisted verdicts into a ready-to-render
+//! [`AppState`]. [`build_bundle`] is reused by the live re-diff worker.
 
 use std::path::Path;
 
@@ -10,69 +11,119 @@ use crate::config;
 use crate::domain::diff::{Diff, DiffBase};
 use crate::domain::session::PermissionMode;
 use crate::git::{self, Repo};
+use crate::session::intent::IntentMap;
 use crate::session::{self, SessionContext, locate};
 
 use super::state::{AppState, SessionListItem, SessionSummary};
 
-/// What the user asked for on the command line, minus the path.
-pub struct Selectors<'a> {
+/// What the user asked for, owned so it can be cloned to the worker thread.
+#[derive(Debug, Clone, Default)]
+pub struct Selectors {
     pub no_session: bool,
-    pub session_id: Option<&'a str>,
+    pub session_id: Option<String>,
     pub run_index: Option<u32>,
+    pub range: Option<(String, String)>,
+    pub staged: bool,
 }
 
-/// Build the initial application state for `repo`.
+/// The diff plus its session overlay — everything a re-diff replaces, leaving
+/// review verdicts/notes (keyed by fingerprint) and cursor state untouched.
+pub struct DiffBundle {
+    pub diff: Diff,
+    pub intent: IntentMap,
+    pub session: Option<SessionSummary>,
+    pub sessions: Vec<SessionListItem>,
+}
+
+/// Build the diff bundle for the current selectors. No persisted-state or
+/// terminal I/O, so it is safe to run on the worker thread.
+pub fn build_bundle(
+    repo: &Repo,
+    claude_dir: Option<&Path>,
+    selectors: &Selectors,
+) -> anyhow::Result<DiffBundle> {
+    if let Some((from, to)) = &selectors.range {
+        let diff = git::differ::diff_range(repo, from, to)
+            .with_context(|| format!("diffing range {from}..{to}"))?;
+        return Ok(DiffBundle::git_only(diff));
+    }
+    if selectors.staged {
+        let diff = git::differ::diff_worktree_vs_index(repo).context("diffing staged changes")?;
+        return Ok(DiffBundle::git_only(diff));
+    }
+    if selectors.no_session {
+        return Ok(DiffBundle::git_only(worktree(repo)?));
+    }
+
+    let Some(claude) = claude_dir else {
+        return Ok(DiffBundle::git_only(worktree(repo)?));
+    };
+
+    match session::load_session(
+        claude,
+        repo.workdir(),
+        selectors.session_id.as_deref(),
+        selectors.run_index,
+    ) {
+        Some(ctx) => {
+            let diff = build_diff_for(repo, &ctx)?;
+            let session = Some(summarize(&ctx, &diff.base));
+            let sessions = session_items(claude, repo.workdir(), Some(&ctx.session.id.0));
+            Ok(DiffBundle {
+                diff,
+                intent: ctx.intent,
+                session,
+                sessions,
+            })
+        }
+        None => Ok(DiffBundle {
+            diff: worktree(repo)?,
+            intent: IntentMap::new(),
+            session: None,
+            sessions: session_items(claude, repo.workdir(), None),
+        }),
+    }
+}
+
+/// Build the full initial [`AppState`]: a bundle plus persisted review verdicts.
 pub fn build_state(
     repo: &Repo,
     state_dir: &Path,
     claude_dir: Option<&Path>,
-    selectors: &Selectors<'_>,
+    selectors: &Selectors,
 ) -> anyhow::Result<AppState> {
-    let mut intent = session::intent::IntentMap::new();
-    let mut summary = None;
-    let mut sessions = Vec::new();
+    let bundle = build_bundle(repo, claude_dir, selectors)?;
+    tracing::info!(
+        files = bundle.diff.files.len(),
+        intent_files = bundle.intent.len(),
+        base = ?bundle.diff.base,
+        live = bundle.session.as_ref().is_some_and(|s| s.live),
+        "built review state"
+    );
 
-    let diff = if selectors.no_session {
-        git::diff_worktree_vs_head(repo).context("building the working-tree diff")?
-    } else if let Some(claude) = claude_dir {
-        match session::load_session(
-            claude,
-            repo.workdir(),
-            selectors.session_id,
-            selectors.run_index,
-        ) {
-            Some(ctx) => {
-                let diff = build_diff_for(repo, &ctx)?;
-                tracing::info!(
-                    session = %ctx.session.id.0,
-                    runs = ctx.session.runs.len(),
-                    selected_run = ?ctx.selected_run,
-                    intent_files = ctx.intent.len(),
-                    base = ?diff.base,
-                    "loaded Claude Code session"
-                );
-                summary = Some(summarize(&ctx, &diff.base));
-                sessions = session_items(claude, repo.workdir(), Some(&ctx.session.id.0));
-                intent = ctx.intent;
-                diff
-            }
-            None => {
-                sessions = session_items(claude, repo.workdir(), None);
-                git::diff_worktree_vs_head(repo).context("building the working-tree diff")?
-            }
-        }
-    } else {
-        git::diff_worktree_vs_head(repo).context("building the working-tree diff")?
-    };
-
-    let state_path = config::review_state_path(state_dir, repo.workdir(), &diff.base);
+    let state_path = config::review_state_path(state_dir, repo.workdir(), &bundle.diff.base);
     let review = config::load_review_state(&state_path);
 
-    let mut state = AppState::new(diff, review, state_path);
-    state.intent = intent;
-    state.session = summary;
-    state.sessions = sessions;
+    let mut state = AppState::new(bundle.diff, review, state_path);
+    state.intent = bundle.intent;
+    state.session = bundle.session;
+    state.sessions = bundle.sessions;
     Ok(state)
+}
+
+impl DiffBundle {
+    fn git_only(diff: Diff) -> Self {
+        DiffBundle {
+            diff,
+            intent: IntentMap::new(),
+            session: None,
+            sessions: Vec::new(),
+        }
+    }
+}
+
+fn worktree(repo: &Repo) -> anyhow::Result<Diff> {
+    git::diff_worktree_vs_head(repo).context("building the working-tree diff")
 }
 
 /// Diff the selected run from its pre-run backups when usable, else fall back to
@@ -84,7 +135,7 @@ fn build_diff_for(repo: &Repo, ctx: &SessionContext) -> anyhow::Result<Diff> {
             git::differ::diff_agent_run(repo, &ctx.session.id, run)
                 .context("building the agent-run diff")
         }
-        _ => git::diff_worktree_vs_head(repo).context("building the working-tree diff"),
+        _ => worktree(repo),
     }
 }
 
@@ -100,9 +151,12 @@ fn summarize(ctx: &SessionContext, base: &DiffBase) -> SessionSummary {
         DiffBase::Range { from, to } => format!("{from}..{to}"),
     };
     SessionSummary {
+        id: ctx.session.id.0.clone(),
         title: ctx.session.title.clone(),
         last_prompt: ctx.session.last_prompt.clone(),
         base_label,
+        // A run that never closed (no following non-autonomous turn) is still running.
+        live: ctx.selected().is_some_and(|r| r.ended.is_none()),
     }
 }
 

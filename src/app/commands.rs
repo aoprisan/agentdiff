@@ -29,5 +29,8 @@ pub enum Command {
     ToggleIntentDetail,
     Select,
 
+    // Notes (Phase 3).
+    EditNote,
+
     Noop,
 }
