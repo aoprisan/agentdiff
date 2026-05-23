@@ -39,3 +39,13 @@ Live re-diff while the agent runs (Phase 3 — this phase reads the transcript o
 
 ## Definition of done
 The MVP: open the tool after an agent run and immediately see *what this run changed* and *why the agent said it did it*, with graceful git-only fallback. Commit.
+
+## Implementation notes (observed format, CC 2.1.148)
+
+The transcript format on the build/runtime machine differs from the planner's verified facts; the implementation handles the real shape and keeps the documented one working defensively:
+
+- **`permissionMode` is a field on `user`/`assistant` records**, not a separate `permission-mode` record. `runs.rs` segments autonomous spans by tracking that field (`auto`/`acceptEdits`), which is equivalent.
+- **No `file-history-snapshot` records and no `~/.claude/file-history/` dir** were present. With no pre-run backups, `diff_base()` returns `None` and the app falls back to `WorkingTreeVsHead` — but **intent is still overlaid on whatever diff is shown** (keyed by repo-relative path), so the "why" is visible even under fallback. The `FileHistorySnapshot` record + `backups.rs` resolution are implemented and fixture-tested so the `AgentRun` base works wherever backups exist.
+- Real record/block shapes used: `user`/`assistant` with `message.content` as a string (prompt) or block list (`text`/`thinking`/`tool_use`/`tool_result`); `last-prompt` (`lastPrompt`), `ai-title` (`aiTitle`). Edit tools: `Edit`/`Write`/`MultiEdit` with `input.file_path`.
+- `slug` is the cwd with `/`/`.` → `-`; libgit2's `workdir()` carries a trailing separator, so the trailing one is stripped before slugifying to match Claude Code's directory name.
+- Tests grounded in real data via `tests/fixtures/session/sample-session.jsonl` (sanitized/synthetic, exercises unknown + truncated lines, an `acceptEdits` run, a `file-history-snapshot`, an out-of-repo edit, and the `parentUuid` intent walk).

@@ -13,6 +13,7 @@ mod config;
 mod domain;
 mod error;
 mod git;
+mod session;
 mod tui;
 
 use std::path::Path;

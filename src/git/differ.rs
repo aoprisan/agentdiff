@@ -18,6 +18,7 @@ use crate::domain::diff::{
 use crate::domain::Timestamp;
 use crate::domain::ids::fingerprint;
 use crate::domain::review::HunkRef;
+use crate::domain::session::{AgentRun, SessionId};
 use crate::error::Result;
 
 /// Build the working-tree-vs-HEAD diff, untracked files included.
@@ -152,6 +153,161 @@ fn build_hunk(patch: &Patch<'_>, h: usize, path: &Path) -> Result<Hunk> {
         header,
         lines,
     })
+}
+
+/// Build a diff for `DiffBase::AgentRun`: each file in the run's pre-run
+/// snapshot, diffed from its backup content to the current working-tree file.
+/// Backups resolve to verbatim pre-edit content; `backup_path: None` marks an
+/// agent-created file (empty → content). A backup we can't read degrades to an
+/// empty pre-side rather than failing the whole diff.
+pub fn diff_agent_run(repo: &Repo, session: &SessionId, run: &AgentRun) -> Result<Diff> {
+    let workdir = repo.workdir();
+    let mut files = Vec::new();
+
+    for (rel_path, backup) in &run.snapshot {
+        let pre = match &backup.backup_path {
+            Some(path) => read_lossy(path),
+            None => String::new(),
+        };
+        let current_path = workdir.join(rel_path);
+        let current = read_lossy(&current_path);
+
+        if pre.is_empty() && current.is_empty() {
+            continue;
+        }
+
+        let is_created = backup.backup_path.is_none();
+        let change = if pre.is_empty() {
+            ChangeKind::Added
+        } else if current.is_empty() {
+            ChangeKind::Deleted
+        } else {
+            ChangeKind::Modified
+        };
+
+        if is_binary_text(&pre) || is_binary_text(&current) {
+            files.push(FileChange {
+                id: FileId(0),
+                path: rel_path.clone(),
+                old_path: None,
+                change,
+                is_binary: true,
+                is_created,
+                language: language_for(rel_path),
+                hunks: Vec::new(),
+                stats: (0, 0),
+            });
+            continue;
+        }
+
+        let hunks = diff_text_to_hunks(&pre, &current, rel_path);
+        let stats = hunks.iter().fold((0, 0), |(a, d), h| {
+            h.lines.iter().fold((a, d), |(a, d), l| match l.kind {
+                LineKind::Added => (a + 1, d),
+                LineKind::Removed => (a, d + 1),
+                LineKind::Context => (a, d),
+            })
+        });
+        files.push(FileChange {
+            id: FileId(0),
+            path: rel_path.clone(),
+            old_path: None,
+            change,
+            is_binary: false,
+            is_created,
+            language: language_for(rel_path),
+            hunks,
+            stats,
+        });
+    }
+
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    for (i, file) in files.iter_mut().enumerate() {
+        file.id = FileId(i as u32);
+    }
+
+    Ok(Diff {
+        base: DiffBase::AgentRun {
+            session: session.clone(),
+            run: run.id,
+        },
+        files,
+        generated_at: Timestamp::now(),
+    })
+}
+
+fn read_lossy(path: &Path) -> String {
+    match std::fs::read(path) {
+        Ok(bytes) => String::from_utf8_lossy(&bytes).into_owned(),
+        Err(_) => String::new(),
+    }
+}
+
+fn is_binary_text(s: &str) -> bool {
+    s.as_bytes().contains(&0)
+}
+
+/// Line-diff two in-memory texts into hunks (with 3 lines of context), reusing
+/// the same word-diff + fingerprinting as the git-backed path.
+fn diff_text_to_hunks(old: &str, new: &str, path: &Path) -> Vec<Hunk> {
+    let diff = TextDiff::from_lines(old, new);
+    let mut hunks = Vec::new();
+
+    for group in diff.grouped_ops(3) {
+        let Some(first) = group.first() else { continue };
+        let old_start = first.old_range().start;
+        let new_start = first.new_range().start;
+        let mut lines = Vec::new();
+        let (mut old_count, mut new_count) = (0u32, 0u32);
+
+        for op in &group {
+            for change in diff.iter_changes(op) {
+                let kind = match change.tag() {
+                    ChangeTag::Equal => {
+                        old_count += 1;
+                        new_count += 1;
+                        LineKind::Context
+                    }
+                    ChangeTag::Delete => {
+                        old_count += 1;
+                        LineKind::Removed
+                    }
+                    ChangeTag::Insert => {
+                        new_count += 1;
+                        LineKind::Added
+                    }
+                };
+                lines.push(Line {
+                    kind,
+                    old_no: change.old_index().map(|i| i as u32 + 1),
+                    new_no: change.new_index().map(|i| i as u32 + 1),
+                    text: trim_eol(change.value()).to_string(),
+                    intra: Vec::new(),
+                });
+            }
+        }
+        compute_intra(&mut lines);
+
+        let old_disp = if old_count == 0 { 0 } else { old_start as u32 + 1 };
+        let new_disp = if new_count == 0 { 0 } else { new_start as u32 + 1 };
+        hunks.push(Hunk {
+            href: HunkRef {
+                path: path.to_path_buf(),
+                fingerprint: fingerprint(path, &lines),
+            },
+            old: LineRange {
+                start: old_disp,
+                count: old_count,
+            },
+            new: LineRange {
+                start: new_disp,
+                count: new_count,
+            },
+            header: format!("@@ -{old_disp},{old_count} +{new_disp},{new_count} @@"),
+            lines,
+        });
+    }
+    hunks
 }
 
 fn change_kind(status: Delta) -> Option<ChangeKind> {
@@ -405,6 +561,68 @@ mod tests {
 
         // `generated_at` is wall-clock and fingerprints are hash values; redact
         // both so the snapshot captures structure, not environment.
+        insta::assert_json_snapshot!(diff, {
+            ".generated_at" => "[ts]",
+            ".files[].hunks[].href.fingerprint" => "[fingerprint]",
+        });
+    }
+
+    #[test]
+    fn agent_run_diff_uses_backups_vs_worktree() {
+        use crate::domain::Timestamp;
+        use crate::domain::session::{AgentRun, Backup, PermissionMode, RunId, SessionId};
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+
+        // A repo whose working tree holds the *post-edit* file contents.
+        let repo_dir = tempfile::tempdir().unwrap();
+        Repository::init(repo_dir.path()).unwrap();
+        write(repo_dir.path(), "src/lib.rs", b"fn f(n: usize) {\n    for _ in 0..n {}\n}\n");
+        write(repo_dir.path(), "src/greet.rs", b"pub fn greet() {}\n");
+
+        // The file-history dir holds the *pre-edit* backup for the modified file.
+        let fh = tempfile::tempdir().unwrap();
+        std::fs::write(
+            fh.path().join("lib.rs.v1"),
+            b"fn f(n: usize) {\n    for _ in 0..=n {}\n}\n",
+        )
+        .unwrap();
+
+        let mut snapshot = HashMap::new();
+        snapshot.insert(
+            PathBuf::from("src/lib.rs"),
+            Backup {
+                backup_path: Some(fh.path().join("lib.rs.v1")),
+                version: 1,
+            },
+        );
+        snapshot.insert(
+            PathBuf::from("src/greet.rs"),
+            Backup {
+                backup_path: None, // agent-created
+                version: 0,
+            },
+        );
+        let run = AgentRun {
+            id: RunId(0),
+            mode: PermissionMode::AcceptEdits,
+            started: Timestamp(0),
+            ended: None,
+            snapshot,
+            edits: Vec::new(),
+        };
+
+        let repo = Repo::discover(repo_dir.path()).unwrap();
+        let diff = diff_agent_run(&repo, &SessionId("sid".into()), &run).unwrap();
+
+        let lib = find(&diff, "src/lib.rs");
+        assert_eq!(lib.change, ChangeKind::Modified);
+        assert!(!lib.hunks.is_empty());
+
+        let greet = find(&diff, "src/greet.rs");
+        assert_eq!(greet.change, ChangeKind::Added);
+        assert!(greet.is_created);
+
         insta::assert_json_snapshot!(diff, {
             ".generated_at" => "[ts]",
             ".files[].hunks[].href.fingerprint" => "[fingerprint]",

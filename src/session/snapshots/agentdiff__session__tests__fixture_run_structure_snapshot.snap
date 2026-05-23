@@ -1,0 +1,42 @@
+---
+source: src/session/mod.rs
+expression: agent_runs
+---
+[
+  {
+    "id": 0,
+    "mode": "AcceptEdits",
+    "started": 1769940030000,
+    "ended": 1769940050000,
+    "snapshot": {
+      "src/greet.rs": {
+        "backup_path": null,
+        "version": 0
+      },
+      "src/lib.rs": {
+        "backup_path": "/fh/lib.rs.v1",
+        "version": 1
+      }
+    },
+    "edits": [
+      {
+        "file_path": "/repo/src/greet.rs",
+        "tool": "Write",
+        "message_uuid": "a1",
+        "parent_uuid": "u2"
+      },
+      {
+        "file_path": "/repo/src/lib.rs",
+        "tool": "Edit",
+        "message_uuid": "a2",
+        "parent_uuid": "r1"
+      },
+      {
+        "file_path": "/outside/thing.rs",
+        "tool": "Edit",
+        "message_uuid": "a3",
+        "parent_uuid": "a2"
+      }
+    ]
+  }
+]

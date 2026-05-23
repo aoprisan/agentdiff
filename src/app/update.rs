@@ -24,10 +24,20 @@ pub fn update(state: &mut AppState, event: AppEvent) {
 }
 
 fn apply(state: &mut AppState, command: Command) {
+    // The session picker is a modal overlay that captures navigation.
+    if state.show_picker {
+        apply_picker(state, command);
+        return;
+    }
+
     match command {
         Command::Quit => state.should_quit = true,
         Command::ToggleHelp => state.show_help = !state.show_help,
         Command::CloseOverlay => state.show_help = false,
+
+        Command::OpenSessionPicker => open_picker(state),
+        Command::ToggleIntentDetail => state.intent_detail = !state.intent_detail,
+        Command::Select => {}
 
         Command::CursorDown => move_cursor(state, state.cursor + 1),
         Command::CursorUp => move_cursor(state, state.cursor.saturating_sub(1)),
@@ -106,4 +116,37 @@ fn set_verdict(state: &mut AppState, verdict: HunkVerdict) {
         state.review.set_verdict(href, verdict);
     }
     state.review_dirty = true;
+}
+
+fn open_picker(state: &mut AppState) {
+    if state.sessions.is_empty() {
+        return;
+    }
+    state.show_help = false;
+    state.show_picker = true;
+    state.picker_cursor = state
+        .sessions
+        .iter()
+        .position(|s| s.is_current)
+        .unwrap_or(0);
+}
+
+/// Command routing while the session picker is open.
+fn apply_picker(state: &mut AppState, command: Command) {
+    let last = state.sessions.len().saturating_sub(1);
+    match command {
+        Command::Quit => state.should_quit = true,
+        Command::CursorDown => state.picker_cursor = (state.picker_cursor + 1).min(last),
+        Command::CursorUp => state.picker_cursor = state.picker_cursor.saturating_sub(1),
+        Command::CloseOverlay | Command::OpenSessionPicker => state.show_picker = false,
+        Command::Select => {
+            if let Some(item) = state.sessions.get(state.picker_cursor)
+                && !item.is_current
+            {
+                state.pending_switch = Some(item.id.clone());
+            }
+            state.show_picker = false;
+        }
+        _ => {}
+    }
 }

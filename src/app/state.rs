@@ -3,14 +3,34 @@ use std::path::PathBuf;
 
 use crate::domain::diff::Diff;
 use crate::domain::review::{HunkRef, HunkVerdict, ReviewState};
+use crate::domain::session::Intent;
 
 use super::rows::{self, FlatDiff, Row};
+use crate::session::intent::IntentMap;
 
 /// Top-level screen. Phase 1 has only the review view; the session picker and
 /// risk inbox arrive in later phases.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum View {
     Review,
+}
+
+/// Header metadata for the loaded session, shown above the intent panel.
+#[derive(Debug, Clone, Default)]
+pub struct SessionSummary {
+    pub title: Option<String>,
+    pub last_prompt: Option<String>,
+    /// Human label for the diff base, e.g. "agent run 2" or "working tree".
+    pub base_label: String,
+}
+
+/// One row in the session picker.
+#[derive(Debug, Clone)]
+pub struct SessionListItem {
+    pub id: String,
+    pub title: Option<String>,
+    pub last_prompt: Option<String>,
+    pub is_current: bool,
 }
 
 /// Aggregate review progress for the status bar.
@@ -43,6 +63,20 @@ pub struct AppState {
     /// terminal size so paging/scrolling math matches what's on screen.
     pub viewport_height: usize,
     pub pending_key: Option<char>,
+
+    // --- Session integration (Phase 2) ---
+    /// Repo-relative path → the agent's stated intent for that file.
+    pub intent: IntentMap,
+    /// Loaded-session header, or `None` under the git-only fallback.
+    pub session: Option<SessionSummary>,
+    /// Show the full intent text vs. a compact preview.
+    pub intent_detail: bool,
+    /// Sessions for the picker, newest-first.
+    pub sessions: Vec<SessionListItem>,
+    pub show_picker: bool,
+    pub picker_cursor: usize,
+    /// Set when the user selects a different session; the run loop reloads it.
+    pub pending_switch: Option<String>,
 }
 
 impl AppState {
@@ -61,7 +95,21 @@ impl AppState {
             scroll: 0,
             viewport_height: 1,
             pending_key: None,
+            intent: IntentMap::new(),
+            session: None,
+            intent_detail: false,
+            sessions: Vec::new(),
+            show_picker: false,
+            picker_cursor: 0,
+            pending_switch: None,
         }
+    }
+
+    /// The agent's intent for the file under the cursor, if any.
+    pub fn current_intent(&self) -> Option<&Intent> {
+        let row = self.current_row()?;
+        let path = &self.diff.files.get(row.file())?.path;
+        self.intent.get(path)
     }
 
     /// Rebuild the flattened rows after the diff or collapse state changes,

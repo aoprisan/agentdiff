@@ -49,6 +49,10 @@ pub fn resolve(key: KeyEvent, pending: Option<char>) -> Resolved {
         KeyCode::Char('x') => Command::NeedsAttention,
         KeyCode::Char('u') => Command::Unset,
 
+        KeyCode::Char('s') => Command::OpenSessionPicker,
+        KeyCode::Char('i') => Command::ToggleIntentDetail,
+        KeyCode::Enter => Command::Select,
+
         _ => Command::Noop,
     };
     Resolved::Command(cmd)

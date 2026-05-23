@@ -24,5 +24,10 @@ pub enum Command {
     NeedsAttention,
     Unset,
 
+    // Session (Phase 2).
+    OpenSessionPicker,
+    ToggleIntentDetail,
+    Select,
+
     Noop,
 }
