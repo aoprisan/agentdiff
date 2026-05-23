@@ -39,12 +39,17 @@ pub fn run(args: Args, state_dir: PathBuf) -> anyhow::Result<()> {
         .with_context(|| format!("opening a git repository at {}", start.display()))?;
     let claude_dir = locate::default_claude_dir();
 
-    // User config: theme colors are global; the syntax theme and keymap are
-    // threaded through so they survive a session switch.
+    // User config: theme is global; the syntax theme and keymap are threaded
+    // through so they survive a session switch.
     let config = config::load_config();
-    theme::set_overrides(theme_overrides(&config.theme));
+    let palette = resolve_palette(&config.theme);
+    theme::install(palette);
     let keymap = Keymap::from_overrides(&config.keys);
-    let syntax_theme = config.theme.syntax.clone().unwrap_or_default();
+    let syntax_theme = config
+        .theme
+        .syntax
+        .clone()
+        .unwrap_or_else(|| palette.syntax.to_string());
 
     let selectors = Selectors {
         no_session: args.no_session,
@@ -154,13 +159,21 @@ fn event_loop(
     Ok(())
 }
 
-/// Build theme color overrides from config (`#rrggbb` strings → colors).
-fn theme_overrides(theme_config: &ThemeConfig) -> theme::Overrides {
-    theme::Overrides {
-        added: theme_config.added.as_deref().and_then(theme::parse_color),
-        removed: theme_config.removed.as_deref().and_then(theme::parse_color),
-        intent: theme_config.intent.as_deref().and_then(theme::parse_color),
-    }
+/// Resolve the active palette: a built-in base (by name) with `#rrggbb`
+/// per-color overrides layered on top.
+fn resolve_palette(theme_config: &ThemeConfig) -> theme::Palette {
+    let base = match &theme_config.name {
+        Some(name) => theme::Palette::by_name(name).unwrap_or_else(|| {
+            tracing::warn!(name, "unknown theme name; using default palette");
+            theme::Palette::default()
+        }),
+        None => theme::Palette::default(),
+    };
+    base.with_overrides(
+        theme_config.added.as_deref().and_then(theme::parse_color),
+        theme_config.removed.as_deref().and_then(theme::parse_color),
+        theme_config.intent.as_deref().and_then(theme::parse_color),
+    )
 }
 
 fn spawn_worker(

@@ -44,7 +44,7 @@ fn note_section(state: &AppState) -> Vec<Line<'static>> {
         Line::styled(
             "NOTE",
             Style::default()
-                .fg(theme::NEEDS_ATTENTION_FG)
+                .fg(theme::needs_attention_fg())
                 .add_modifier(Modifier::BOLD),
         ),
         Line::raw(note.clone()),
@@ -55,7 +55,7 @@ fn header(state: &AppState) -> Vec<Line<'static>> {
     let Some(session) = &state.session else {
         return vec![Line::styled(
             "no agent session",
-            Style::default().fg(theme::GUTTER_FG),
+            Style::default().fg(theme::gutter_fg()),
         )];
     };
 
@@ -72,14 +72,14 @@ fn header(state: &AppState) -> Vec<Line<'static>> {
 
     let mut base = vec![Span::styled(
         session.base_label.clone(),
-        Style::default().fg(theme::HUNK_HEADER_FG),
+        Style::default().fg(theme::hunk_header_fg()),
     )];
     if session.live {
         base.push(Span::raw("  "));
         base.push(Span::styled(
             "● live",
             Style::default()
-                .fg(theme::REMOVED_FG)
+                .fg(theme::removed_fg())
                 .add_modifier(Modifier::BOLD),
         ));
     }
@@ -97,11 +97,11 @@ fn body(state: &AppState) -> Vec<Line<'static>> {
     let Some(intent) = state.current_intent() else {
         let mut lines = Vec::new();
         if let Some(path) = file {
-            lines.push(Line::styled(path, Style::default().fg(theme::GUTTER_FG)));
+            lines.push(Line::styled(path, Style::default().fg(theme::gutter_fg())));
         }
         lines.push(Line::styled(
             "(no recorded intent for this file)",
-            Style::default().fg(theme::GUTTER_FG),
+            Style::default().fg(theme::gutter_fg()),
         ));
         return lines;
     };
@@ -110,7 +110,7 @@ fn body(state: &AppState) -> Vec<Line<'static>> {
     if let Some(path) = file {
         lines.push(Line::styled(
             path,
-            Style::default().fg(theme::GUTTER_FG),
+            Style::default().fg(theme::gutter_fg()),
         ));
     }
     lines.push(why_line(intent.confidence));
@@ -123,7 +123,7 @@ fn body(state: &AppState) -> Vec<Line<'static>> {
         lines.push(Line::from(""));
         lines.push(Line::styled(
             "i: show full intent",
-            Style::default().fg(theme::GUTTER_FG),
+            Style::default().fg(theme::gutter_fg()),
         ));
     } else {
         lines.push(Line::raw(text.clone()));
@@ -144,6 +144,6 @@ fn why_line(confidence: f32) -> Line<'static> {
                 .add_modifier(Modifier::BOLD),
         ),
         Span::styled(meter, Style::default().fg(theme::intent_fg())),
-        Span::styled(format!(" {pct}%"), Style::default().fg(theme::GUTTER_FG)),
+        Span::styled(format!(" {pct}%"), Style::default().fg(theme::gutter_fg())),
     ])
 }

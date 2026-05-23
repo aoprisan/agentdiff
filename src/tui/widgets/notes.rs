@@ -31,7 +31,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         Line::styled(
             "Enter: save    Esc: cancel",
             Style::default()
-                .fg(theme::GUTTER_FG)
+                .fg(theme::gutter_fg())
                 .add_modifier(Modifier::DIM),
         ),
     ];

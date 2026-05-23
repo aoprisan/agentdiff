@@ -86,7 +86,10 @@ pub struct Config {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct ThemeConfig {
-    /// syntect theme name (e.g. "base16-ocean.dark", "InspiredGitHub").
+    /// Built-in palette name: "default", "solarized-dark", or "solarized-light".
+    pub name: Option<String>,
+    /// syntect theme name (e.g. "base16-ocean.dark", "InspiredGitHub"). Defaults
+    /// to the one paired with the palette.
     pub syntax: Option<String>,
     /// `#rrggbb` overrides for the add / remove / intent foregrounds.
     pub added: Option<String>,

@@ -29,7 +29,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, hl: &mut Highligh
     if state.flat.is_empty() {
         let msg = Paragraph::new("No changes in the working tree.")
             .alignment(Alignment::Center)
-            .style(Style::default().fg(theme::GUTTER_FG));
+            .style(Style::default().fg(theme::gutter_fg()));
         frame.render_widget(msg, inner);
         return;
     }
@@ -81,7 +81,7 @@ fn render_row(
         Row::Line { file, hunk, line } => diff_line(state, hl, file, hunk, line, num_w),
     };
     if on_cursor {
-        line.style(Style::default().bg(theme::CURSOR_BG))
+        line.style(Style::default().bg(theme::cursor_bg()))
     } else {
         line
     }
@@ -106,12 +106,12 @@ fn file_header(file: &FileChange) -> Line<'static> {
     if file.is_binary {
         spans.push(Span::styled(
             "  (binary)",
-            Style::default().fg(theme::GUTTER_FG),
+            Style::default().fg(theme::gutter_fg()),
         ));
     } else {
         spans.push(Span::styled(
             format!("  +{} -{}", file.stats.0, file.stats.1),
-            Style::default().fg(theme::GUTTER_FG),
+            Style::default().fg(theme::gutter_fg()),
         ));
     }
     Line::from(spans)
@@ -126,7 +126,7 @@ fn collapsed_summary(file: &FileChange) -> Line<'static> {
     } else {
         format!("    … {total} lines collapsed — Space to expand")
     };
-    Line::styled(text, Style::default().fg(theme::GUTTER_FG))
+    Line::styled(text, Style::default().fg(theme::gutter_fg()))
 }
 
 fn hunk_header(state: &AppState, file: usize, hunk: usize) -> Line<'static> {
@@ -139,13 +139,13 @@ fn hunk_header(state: &AppState, file: usize, hunk: usize) -> Line<'static> {
         ),
         Span::styled(
             h.header.clone(),
-            Style::default().fg(theme::HUNK_HEADER_FG),
+            Style::default().fg(theme::hunk_header_fg()),
         ),
     ];
     if state.review.notes.contains_key(&h.href) {
         spans.push(Span::styled(
             "  ✎",
-            Style::default().fg(theme::NEEDS_ATTENTION_FG),
+            Style::default().fg(theme::needs_attention_fg()),
         ));
     }
     Line::from(spans)
@@ -164,16 +164,16 @@ fn diff_line(
     let l = &h.lines[line];
 
     let (num, sign, sign_color) = match l.kind {
-        LineKind::Added => (l.new_no, '+', theme::ADDED_SIGN),
-        LineKind::Removed => (l.old_no, '-', theme::REMOVED_SIGN),
-        LineKind::Context => (l.new_no.or(l.old_no), ' ', theme::GUTTER_FG),
+        LineKind::Added => (l.new_no, '+', theme::added_sign()),
+        LineKind::Removed => (l.old_no, '-', theme::removed_sign()),
+        LineKind::Context => (l.new_no.or(l.old_no), ' ', theme::gutter_fg()),
     };
     let num_text = num.map(|n| n.to_string()).unwrap_or_default();
 
     let mut spans = vec![
         Span::styled(
             format!("{num_text:>num_w$} "),
-            Style::default().fg(theme::GUTTER_FG),
+            Style::default().fg(theme::gutter_fg()),
         ),
         Span::styled(format!("{sign} "), Style::default().fg(sign_color)),
     ];
@@ -209,9 +209,9 @@ fn text_spans(
     cuts.dedup();
 
     let emph_bg = match kind {
-        LineKind::Added => theme::ADDED_EMPH_BG,
-        LineKind::Removed => theme::REMOVED_EMPH_BG,
-        LineKind::Context => theme::CURSOR_BG,
+        LineKind::Added => theme::added_emph_bg(),
+        LineKind::Removed => theme::removed_emph_bg(),
+        LineKind::Context => theme::cursor_bg(),
     };
     let default_fg = match kind {
         LineKind::Added => theme::added_fg(),
@@ -242,19 +242,19 @@ fn text_spans(
 
 fn badge(change: ChangeKind) -> (char, Color) {
     match change {
-        ChangeKind::Added => ('A', theme::ADDED_SIGN),
-        ChangeKind::Modified => ('M', theme::NEEDS_ATTENTION_FG),
-        ChangeKind::Deleted => ('D', theme::REMOVED_SIGN),
-        ChangeKind::Renamed => ('R', theme::HUNK_HEADER_FG),
-        ChangeKind::Copied => ('C', theme::HUNK_HEADER_FG),
-        ChangeKind::TypeChange => ('T', theme::GUTTER_FG),
+        ChangeKind::Added => ('A', theme::added_sign()),
+        ChangeKind::Modified => ('M', theme::needs_attention_fg()),
+        ChangeKind::Deleted => ('D', theme::removed_sign()),
+        ChangeKind::Renamed => ('R', theme::hunk_header_fg()),
+        ChangeKind::Copied => ('C', theme::hunk_header_fg()),
+        ChangeKind::TypeChange => ('T', theme::gutter_fg()),
     }
 }
 
 fn verdict_marker(verdict: HunkVerdict) -> (char, Color) {
     match verdict {
         HunkVerdict::Unreviewed => (' ', Color::Reset),
-        HunkVerdict::Approved => ('✓', theme::APPROVED_FG),
-        HunkVerdict::NeedsAttention => ('✗', theme::NEEDS_ATTENTION_FG),
+        HunkVerdict::Approved => ('✓', theme::approved_fg()),
+        HunkVerdict::NeedsAttention => ('✗', theme::needs_attention_fg()),
     }
 }

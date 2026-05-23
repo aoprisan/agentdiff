@@ -30,7 +30,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     lines.push(Line::from(""));
     lines.push(Line::styled(
         "  Enter: switch    Esc: close",
-        Style::default().fg(theme::GUTTER_FG),
+        Style::default().fg(theme::gutter_fg()),
     ));
 
     frame.render_widget(Paragraph::new(lines), inner);
@@ -53,14 +53,14 @@ fn session_line(
 
     let line = Line::from(vec![
         Span::raw(pointer),
-        Span::styled(current, Style::default().fg(theme::APPROVED_FG)),
-        Span::styled(format!("{short_id}  "), Style::default().fg(theme::HUNK_HEADER_FG)),
+        Span::styled(current, Style::default().fg(theme::approved_fg())),
+        Span::styled(format!("{short_id}  "), Style::default().fg(theme::hunk_header_fg())),
         Span::raw(label),
     ]);
     if selected {
         line.style(
             Style::default()
-                .bg(theme::CURSOR_BG)
+                .bg(theme::cursor_bg())
                 .add_modifier(Modifier::BOLD),
         )
     } else {

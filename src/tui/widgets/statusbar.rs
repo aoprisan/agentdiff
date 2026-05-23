@@ -17,14 +17,14 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     let mut spans = vec![
         " agentdiff ".bold(),
         Span::raw("  "),
-        Span::styled(base_label(&state.diff.base), Style::default().fg(theme::HUNK_HEADER_FG)),
+        Span::styled(base_label(&state.diff.base), Style::default().fg(theme::hunk_header_fg())),
     ];
     if state.session.as_ref().is_some_and(|s| s.live) {
         spans.push(Span::raw(" "));
         spans.push(Span::styled(
             "● live",
             Style::default()
-                .fg(theme::REMOVED_FG)
+                .fg(theme::removed_fg())
                 .add_modifier(Modifier::BOLD),
         ));
     }
@@ -32,13 +32,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     spans.push(Span::raw("   "));
     spans.push(Span::styled(
         format!("reviewed {}/{}", counts.reviewed, counts.total),
-        Style::default().fg(theme::APPROVED_FG),
+        Style::default().fg(theme::approved_fg()),
     ));
     if counts.needs_attention > 0 {
         spans.push(Span::raw("  "));
         spans.push(Span::styled(
             format!("✗ {}", counts.needs_attention),
-            Style::default().fg(theme::NEEDS_ATTENTION_FG),
+            Style::default().fg(theme::needs_attention_fg()),
         ));
     }
     if counts.changed_since_reviewed > 0 {
@@ -46,7 +46,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         spans.push(Span::styled(
             format!("⚠ {} changed", counts.changed_since_reviewed),
             Style::default()
-                .fg(theme::CHANGED_SINCE_FG)
+                .fg(theme::changed_since_fg())
                 .add_modifier(Modifier::BOLD),
         ));
     }

@@ -20,7 +20,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
 
     if state.diff.files.is_empty() {
         frame.render_widget(
-            Paragraph::new("(no changes)").style(Style::default().fg(theme::GUTTER_FG)),
+            Paragraph::new("(no changes)").style(Style::default().fg(theme::gutter_fg())),
             inner,
         );
         return;
@@ -68,7 +68,7 @@ fn file_line(state: &AppState, file: &FileChange, idx: usize, selected: bool) ->
         Span::raw(file.path.display().to_string()),
         Span::styled(
             format!("  +{} -{}", file.stats.0, file.stats.1),
-            Style::default().fg(theme::GUTTER_FG),
+            Style::default().fg(theme::gutter_fg()),
         ),
     ];
     if let Some(marker) = verdict_rollup(state, file) {
@@ -77,7 +77,7 @@ fn file_line(state: &AppState, file: &FileChange, idx: usize, selected: bool) ->
 
     let line = Line::from(spans);
     if selected {
-        line.style(Style::default().bg(theme::CURSOR_BG))
+        line.style(Style::default().bg(theme::cursor_bg()))
     } else {
         line
     }
@@ -100,12 +100,12 @@ fn verdict_rollup(state: &AppState, file: &FileChange) -> Option<Span<'static>> 
     if needs > 0 {
         Some(Span::styled(
             "  ✗",
-            Style::default().fg(theme::NEEDS_ATTENTION_FG),
+            Style::default().fg(theme::needs_attention_fg()),
         ))
     } else if approved == file.hunks.len() {
-        Some(Span::styled("  ✓", Style::default().fg(theme::APPROVED_FG)))
+        Some(Span::styled("  ✓", Style::default().fg(theme::approved_fg())))
     } else if approved > 0 {
-        Some(Span::styled("  ·", Style::default().fg(theme::APPROVED_FG)))
+        Some(Span::styled("  ·", Style::default().fg(theme::approved_fg())))
     } else {
         None
     }
@@ -113,11 +113,11 @@ fn verdict_rollup(state: &AppState, file: &FileChange) -> Option<Span<'static>> 
 
 fn badge(change: ChangeKind) -> (char, Color) {
     match change {
-        ChangeKind::Added => ('A', theme::ADDED_SIGN),
-        ChangeKind::Modified => ('M', theme::NEEDS_ATTENTION_FG),
-        ChangeKind::Deleted => ('D', theme::REMOVED_SIGN),
-        ChangeKind::Renamed => ('R', theme::HUNK_HEADER_FG),
-        ChangeKind::Copied => ('C', theme::HUNK_HEADER_FG),
-        ChangeKind::TypeChange => ('T', theme::GUTTER_FG),
+        ChangeKind::Added => ('A', theme::added_sign()),
+        ChangeKind::Modified => ('M', theme::needs_attention_fg()),
+        ChangeKind::Deleted => ('D', theme::removed_sign()),
+        ChangeKind::Renamed => ('R', theme::hunk_header_fg()),
+        ChangeKind::Copied => ('C', theme::hunk_header_fg()),
+        ChangeKind::TypeChange => ('T', theme::gutter_fg()),
     }
 }

@@ -136,3 +136,26 @@ impl Highlighter {
         spans
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::tui::theme::Palette;
+
+    #[test]
+    fn palette_syntax_themes_are_bundled() {
+        // Each built-in palette names a syntect theme that actually ships, so
+        // `with_theme` uses it rather than silently falling back.
+        for palette in [
+            Palette::default_dark(),
+            Palette::solarized_dark(),
+            Palette::solarized_light(),
+        ] {
+            assert!(
+                THEMES.themes.contains_key(palette.syntax),
+                "missing bundled theme: {}",
+                palette.syntax
+            );
+        }
+    }
+}
