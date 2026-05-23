@@ -13,6 +13,7 @@ mod config;
 mod domain;
 mod error;
 mod git;
+mod install;
 mod session;
 mod tui;
 mod watch;
@@ -24,6 +25,13 @@ use clap::Parser;
 
 fn main() -> anyhow::Result<()> {
     let args = cli::Args::parse();
+
+    // `--install` is a one-shot side task: copy the binary onto PATH and exit
+    // before we touch the state dir, logging, or the terminal.
+    if args.install {
+        return install::install();
+    }
+
     let paths = config::paths().context("resolving application paths")?;
     init_logging(&paths.log_file).context("initializing logging")?;
 
