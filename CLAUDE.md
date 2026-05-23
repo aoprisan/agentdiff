@@ -47,7 +47,7 @@ The implementation is delivered **one phase at a time**. The plan is the source 
 These data sources were verified to exist on disk; see `docs/plan/00-overview.md` and `03-phase2-cc-integration.md` for specifics:
 - Transcripts: `~/.claude/projects/<slug>/<session-uuid>.jsonl` (`slug` = absolute cwd with `/` and `.` → `-`).
 - Pre-edit file content: `~/.claude/file-history/<session-uuid>/<backupFileName>`.
-- `permission-mode` records segment autonomous runs (`auto`); `file-history-snapshot` records are **cumulative** (use the latest within a run span); `trackedFileBackups` path keys may be absolute and point outside the repo (normalize + drop out-of-repo entries).
+- `permission-mode` records segment autonomous runs (`auto`); `file-history-snapshot` records accumulate files as the run first touches them, but a **later snapshot re-baselines an already-edited file at its current content** under a higher `@vN` version — so the pre-run content is each file's **earliest (lowest-version) backup** within the span, *not* the latest snapshot (taking the latest diffs every file against its post-edit state → an empty diff for the whole run). `trackedFileBackups` path keys may be absolute and point outside the repo (normalize + drop out-of-repo entries).
 - Agent intent is **not** colocated with an edit — recover it by walking the transcript's `parentUuid` chain up to the nearest preceding `assistant` text turn.
 - Treat all session data as **advisory**: git is always the source of truth, and the tool must stay useful (Phase 1 behavior) when parsing yields nothing. Confine format knowledge to `session/` behind a tagged-enum parser with an `Other` fallback.
 

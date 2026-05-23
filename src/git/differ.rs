@@ -231,7 +231,11 @@ pub fn diff_agent_run(repo: &Repo, session: &SessionId, run: &AgentRun) -> Resul
         let current_path = workdir.join(rel_path);
         let current = read_lossy(&current_path);
 
-        if pre.is_empty() && current.is_empty() {
+        // Nothing to review when the pre-run content already matches the working
+        // tree: the agent backed the file up but its content is unchanged (or a
+        // backup resolved to the current state). The git path drops such files
+        // implicitly; do the same here rather than emit an empty "M +0 -0" entry.
+        if pre == current {
             continue;
         }
 

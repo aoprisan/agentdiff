@@ -2,8 +2,9 @@
 //!
 //! A run is a maximal contiguous span during which the agent was in an
 //! autonomous permission mode (`auto`/`acceptEdits`). Within a span we collect
-//! the agent's edit events and fold in the (cumulative) `file-history-snapshot`
-//! records, keeping the latest within the span as the pre-run file map. The raw
+//! the agent's edit events and fold in the `file-history-snapshot` records,
+//! keeping each file's *earliest* backup within the span as the pre-run file map
+//! (later snapshots re-baseline edited files at their current content). The raw
 //! per-path backups are resolved to on-disk paths later by `backups`.
 
 use std::collections::HashMap;
@@ -21,7 +22,8 @@ pub struct RawRun {
     pub started: Option<Timestamp>,
     pub ended: Option<Timestamp>,
     pub edits: Vec<ToolEditEvent>,
-    /// Latest `trackedFileBackups` seen within the span (path string → backup).
+    /// Pre-run `trackedFileBackups` within the span: the earliest (lowest-`@vN`)
+    /// backup seen per path, i.e. each file's content before the run edited it.
     pub raw_backups: HashMap<String, TrackedBackup>,
     /// `Bash` commands run within the span, in transcript order.
     pub commands: Vec<CommandRun>,
@@ -167,8 +169,22 @@ pub fn segment(records: &[Record]) -> Segmentation {
         if let Record::FileHistorySnapshot(fhs) = record
             && let Some(snapshot) = &fhs.snapshot
         {
-            // Snapshots are cumulative; the latest within the span wins.
-            run.raw_backups = snapshot.tracked_file_backups.clone();
+            // A file's *first* backup (lowest `@vN`) holds its pre-run content.
+            // Snapshots accumulate files as they're first touched, but a later
+            // checkpoint re-baselines an already-edited file at its *current*
+            // content under a higher version — so keep the earliest version per
+            // path. (The old "latest snapshot wins" rule diffed each file against
+            // its post-edit state, producing an empty diff for the whole run.)
+            for (path, backup) in &snapshot.tracked_file_backups {
+                run.raw_backups
+                    .entry(path.clone())
+                    .and_modify(|existing| {
+                        if backup.version < existing.version {
+                            *existing = backup.clone();
+                        }
+                    })
+                    .or_insert_with(|| backup.clone());
+            }
         }
     }
 
@@ -229,6 +245,27 @@ mod tests {
         assert_eq!(run.edits[1].tool, EditTool::Write);
         assert!(run.raw_backups.contains_key("/repo/a.rs"));
         assert!(run.started.unwrap().0 < run.ended.unwrap().0);
+    }
+
+    #[test]
+    fn keeps_earliest_backup_when_a_later_snapshot_rebaselines() {
+        // Within one autonomous span the agent edits a.rs (pre-run backup @v1),
+        // then a later checkpoint re-baselines it at its current content (@v2).
+        // The pre-run map must keep @v1 — diffing against @v2 would be empty.
+        let jsonl = r#"
+{"type":"user","uuid":"u1","permissionMode":"acceptEdits","timestamp":"2026-01-01T00:00:00Z","message":{"content":"go"}}
+{"type":"file-history-snapshot","snapshot":{"trackedFileBackups":{"/repo/a.rs":{"backupFileName":"a.rs@v1","version":1}},"timestamp":"2026-01-01T00:00:05Z"}}
+{"type":"assistant","uuid":"a1","parentUuid":"u1","timestamp":"2026-01-01T00:00:06Z","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/repo/a.rs"}}]}}
+{"type":"file-history-snapshot","snapshot":{"trackedFileBackups":{"/repo/a.rs":{"backupFileName":"a.rs@v2","version":2},"/repo/b.rs":{"backupFileName":"b.rs@v1","version":1}},"timestamp":"2026-01-01T00:00:10Z"}}
+"#;
+        let seg = segment(&parse_reader(jsonl.as_bytes()));
+        let backups = &seg.runs[0].raw_backups;
+
+        let a = &backups["/repo/a.rs"];
+        assert_eq!(a.version, 1, "later @v2 re-baseline must not overwrite @v1");
+        assert_eq!(a.backup_file_name.as_deref(), Some("a.rs@v1"));
+        // A file first seen in the later snapshot is still picked up.
+        assert_eq!(backups["/repo/b.rs"].version, 1);
     }
 
     #[test]

@@ -16,7 +16,7 @@ You run Claude Code in auto/accept-edits mode, so the agent makes many edits acr
 - Transcripts: `~/.claude/projects/<slug>/<session-uuid>.jsonl`; `slug` = absolute cwd with `/` and `.` → `-`.
 - `~/.claude/file-history/<session-uuid>/<backupFileName>` holds verbatim **pre-edit** content. Dir exists with **213** session backup folders.
 - `permission-mode` records carry `auto` / `plan` / `default` — `auto` is the autonomous span to segment on.
-- `file-history-snapshot` records: `{messageId, snapshot:{messageId, trackedFileBackups, timestamp}}`, **cumulative** (early ones empty). `trackedFileBackups[path] = {backupFileName, version, backupTime}`; `backupFileName: null` ⇒ agent-created file. Path keys are sometimes absolute and may point outside the repo.
+- `file-history-snapshot` records: `{messageId, snapshot:{messageId, trackedFileBackups, timestamp}}`. Files accumulate as they're first touched (early snapshots empty), each at its **pre-edit** `@v1`; a later snapshot (`isSnapshotUpdate:false`) **re-baselines** edited files at their *current* content under a higher `@vN`. So a file's pre-run content is its **earliest (lowest-version)** backup in the span — not the latest. `trackedFileBackups[path] = {backupFileName, version, backupTime}`; `backupFileName: null` ⇒ agent-created file. Path keys are sometimes absolute and may point outside the repo.
 - Intent is **not** colocated with the edit: an `Edit`/`Write`/`MultiEdit` `tool_use` reaches its reasoning by walking `parentUuid` up to the nearest preceding `assistant` text turn (confirmed: 1 hop → `"Now let me start writing files…"`).
 
 ## Stack

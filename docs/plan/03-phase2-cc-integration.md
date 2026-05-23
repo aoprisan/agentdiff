@@ -5,7 +5,7 @@
 ## In scope
 - `session/locate.rs`: cwd → slug (`/` and `.` → `-`); list this project's sessions newest-first; pick the latest session and its latest `auto` run.
 - `session/transcript.rs`: streaming line-by-line JSONL parser → `Vec<Record>` using `#[serde(tag="type")]` + `#[serde(other)]` catch-all; tolerate a partially-written trailing line.
-- `session/runs.rs`: segment records by `permission-mode` (`auto` spans = autonomous runs); fold the **cumulative** `file-history-snapshot` records into each `AgentRun`'s pre-run `snapshot` map (use the latest snapshot within the span).
+- `session/runs.rs`: segment records by `permission-mode` (`auto` spans = autonomous runs); fold the `file-history-snapshot` records into each `AgentRun`'s pre-run `snapshot` map, keeping each file's **earliest (lowest-`@vN`) backup** within the span — a later snapshot re-baselines an already-edited file at its current content, so taking the latest snapshot would diff every file against its post-edit state (empty diff for the whole run).
 - `session/backups.rs`: resolve `trackedFileBackups[path].backupFileName` → `~/.claude/file-history/<sid>/<backupFileName>` (verbatim pre-edit content); `backupFileName: null` ⇒ agent-created. Normalize path keys to absolute, re-relativize to repo root, **drop out-of-repo entries**.
 - `git/differ.rs`: support `DiffBase::AgentRun` — diff each backup's pre-run content vs the current working-tree file (via `similar`, same `Hunk`/`Line` model); created files render as full additions.
 - Default base = latest `auto` run; **fallback to `WorkingTreeVsHead`** (Phase 1) when no session/run/backups are found. `--no-session` forces git-only; `--session <id>` / `--run <n>` select explicitly.
