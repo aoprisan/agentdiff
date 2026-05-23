@@ -290,6 +290,8 @@ fn render(frame: &mut Frame, state: &AppState, highlighter: &mut Highlighter) {
         widgets::notes::render(frame, frame.area(), state);
     } else if state.show_picker {
         widgets::session_picker::render(frame, frame.area(), state);
+    } else if state.show_verify {
+        widgets::verification::render(frame, frame.area(), state);
     } else if state.show_help {
         widgets::help::render(frame, frame.area());
     }
@@ -393,6 +395,30 @@ mod tests {
         )
     }
 
+    fn sample_commands() -> Vec<crate::domain::session::CommandRun> {
+        use crate::domain::session::{CommandKind, CommandOutcome, CommandRun};
+        vec![
+            CommandRun {
+                command: "cargo test --all".into(),
+                description: Some("run the test suite".into()),
+                kind: CommandKind::Test,
+                outcome: CommandOutcome::Ok,
+                output_excerpt: "test result: ok. 42 passed; 0 failed".into(),
+                message_uuid: "c1".into(),
+                timestamp: None,
+            },
+            CommandRun {
+                command: "cargo clippy --all-targets".into(),
+                description: None,
+                kind: CommandKind::Lint,
+                outcome: CommandOutcome::Failed,
+                output_excerpt: "error: unused variable `x`\nExit code 1".into(),
+                message_uuid: "c2".into(),
+                timestamp: None,
+            },
+        ]
+    }
+
     fn render_to_string(state: &AppState) -> String {
         let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
         let mut hl = Highlighter::new();
@@ -474,6 +500,7 @@ mod tests {
             last_prompt: Some("thanks".into()),
             base_label: "agent run 1/1 (acceptEdits)".into(),
             live: true,
+            commands: sample_commands(),
         });
         state.intent.insert(
             PathBuf::from("src/main.rs"),
@@ -484,6 +511,23 @@ mod tests {
                 confidence: 0.9,
             },
         );
+        insta::assert_snapshot!(render_to_string(&state));
+    }
+
+    #[test]
+    fn renders_verification_overlay() {
+        use crate::app::state::SessionSummary;
+
+        let mut state = sample_state();
+        state.session = Some(SessionSummary {
+            id: "11111111-aaaa".into(),
+            title: Some("Add greeting, fix off-by-one".into()),
+            last_prompt: Some("thanks".into()),
+            base_label: "agent run 1/1 (acceptEdits)".into(),
+            live: false,
+            commands: sample_commands(),
+        });
+        state.show_verify = true;
         insta::assert_snapshot!(render_to_string(&state));
     }
 

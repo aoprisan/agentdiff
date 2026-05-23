@@ -157,6 +157,11 @@ fn summarize(ctx: &SessionContext, base: &DiffBase) -> SessionSummary {
         base_label,
         // A run that never closed (no following non-autonomous turn) is still running.
         live: ctx.selected().is_some_and(|r| r.ended.is_none()),
+        // The commands the selected run ran, for the verification badge/overlay.
+        commands: ctx
+            .selected()
+            .map(|r| r.commands.clone())
+            .unwrap_or_default(),
     }
 }
 

@@ -29,6 +29,9 @@ pub enum Command {
     ToggleIntentDetail,
     Select,
 
+    // Verification (Phase 6): commands the agent ran to check its work.
+    ToggleVerification,
+
     // Notes (Phase 3).
     EditNote,
 

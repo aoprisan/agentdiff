@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use crate::domain::diff::Diff;
 use crate::domain::review::{HunkRef, HunkVerdict, ReviewState};
-use crate::domain::session::Intent;
+use crate::domain::session::{CommandRun, Intent};
 
 use super::keymap::Keymap;
 use super::rows::{self, FlatDiff, Row};
@@ -27,6 +27,9 @@ pub struct SessionSummary {
     pub base_label: String,
     /// The selected run is still in progress (no closing turn yet).
     pub live: bool,
+    /// Shell commands the selected run ran, for the verification badge/overlay.
+    /// Empty under the git-only fallback or for a run that ran nothing.
+    pub commands: Vec<CommandRun>,
 }
 
 /// In-progress per-hunk note edit (a tiny modal input).
@@ -83,6 +86,8 @@ pub struct AppState {
     pub session: Option<SessionSummary>,
     /// Show the full intent text vs. a compact preview.
     pub intent_detail: bool,
+    /// Verification overlay (commands the agent ran) is open.
+    pub show_verify: bool,
     /// Sessions for the picker, newest-first.
     pub sessions: Vec<SessionListItem>,
     pub show_picker: bool,
@@ -119,6 +124,7 @@ impl AppState {
             intent: IntentMap::new(),
             session: None,
             intent_detail: false,
+            show_verify: false,
             sessions: Vec::new(),
             show_picker: false,
             picker_cursor: 0,

@@ -12,5 +12,6 @@ A Rust TUI git-diff tool for reviewing what a Claude Code agent did in auto mode
 | 3 | [`04-phase3-live-polish.md`](04-phase3-live-polish.md) | Live re-diff while the agent runs, session-picker polish, config | ✅ complete |
 | 4 | [`05-phase4-risk-engine.md`](05-phase4-risk-engine.md) | Optional risk inbox (deprioritized) | ⬜ next |
 | 5 | [`06-phase5-future.md`](06-phase5-future.md) | Out-of-scope action layer (revert/export/stage) — kept architecturally compatible | ⬜ (out of scope) |
+| 6 | [`07-phase6-verification.md`](07-phase6-verification.md) | Verification surfacing: the test/build/lint commands the agent ran + outcomes ("did it actually work?") | ✅ complete |
 
 **MVP = phases 0–2.** Phases 3–5 are post-MVP. Each phase file is self-contained: goal, in/out of scope, crates to add, ordered tasks, files touched, and acceptance criteria.

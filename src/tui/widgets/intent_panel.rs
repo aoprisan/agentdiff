@@ -84,6 +84,12 @@ fn header(state: &AppState) -> Vec<Line<'static>> {
         ));
     }
     lines.push(Line::from(base));
+
+    // What the agent ran to verify itself, if anything — the read-only twin of
+    // the per-file intent below.
+    if let Some(verify) = super::verification::summary_line(&session.commands) {
+        lines.push(verify);
+    }
     lines
 }
 

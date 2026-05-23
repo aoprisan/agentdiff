@@ -23,6 +23,12 @@ other commit: flat, intent-free, and not scoped to "what this one run touched."
 - **Agent-intent correlation.** For each changed file it surfaces the agent's
   own reasoning, recovered by walking the transcript back to the assistant turn
   that drove the edit.
+- **Verification surfacing — "did it actually work?"** Alongside what the agent
+  *said*, it shows what the agent *ran to check itself*: the test/build/lint
+  commands in the run and whether they passed (a compact `✓ test · ✗ lint` badge,
+  with `v` opening the full command list and output). Outcomes are read from the
+  command output, so a failing `cargo test` is flagged even when Claude Code's
+  own error flag isn't set.
 - **Read-only triage.** Mark hunks approved or needs-attention and attach notes;
   state persists across runs and re-attaches to changes by content fingerprint,
   not line number, so it survives a live re-diff.
@@ -33,7 +39,8 @@ other commit: flat, intent-free, and not scoped to "what this one run touched."
 
 Phases 0–3 are complete: git working-tree reviewer (including untracked files),
 Claude Code per-run scoping + intent correlation, live re-diff while the agent is
-running, a session picker, and TOML config. An optional risk-scoring engine
+running, a session picker, and TOML config. Phase 6 adds verification surfacing
+(the commands the agent ran to check its work). An optional risk-scoring engine
 (phase 4) and any tree-mutating actions (phase 5, intentionally out of scope) are
 not built. See [`docs/plan/`](docs/plan/) for the full roadmap.
 
@@ -97,6 +104,7 @@ It needs a real terminal (TTY). `agentdiff --help` prints the full CLI surface.
 | `n` | Add / edit note |
 | `s` | Session picker |
 | `i` | Toggle intent detail |
+| `v` | Verification overlay (commands the agent ran + outcomes) |
 | `?` | Toggle help |
 | `Esc` | Close overlay |
 | `q` | Quit |
@@ -122,8 +130,8 @@ approve = "v"
 
 Overridable command names: `quit`, `help`, `cursor_down`, `cursor_up`,
 `next_file`, `prev_file`, `goto_bottom`, `toggle_collapse`, `approve`,
-`needs_attention`, `unset`, `session_picker`, `intent_detail`, `edit_note`.
-(Ctrl-chords, two-key sequences, and special keys are fixed.)
+`needs_attention`, `unset`, `session_picker`, `intent_detail`, `verification`,
+`edit_note`. (Ctrl-chords, two-key sequences, and special keys are fixed.)
 
 ## How it works
 

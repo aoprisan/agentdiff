@@ -81,6 +81,7 @@ impl Keymap {
 
             KeyCode::Char('s') => Command::OpenSessionPicker,
             KeyCode::Char('i') => Command::ToggleIntentDetail,
+            KeyCode::Char('v') => Command::ToggleVerification,
             KeyCode::Char('n') => Command::EditNote,
             KeyCode::Enter => Command::Select,
 
@@ -116,6 +117,7 @@ fn command_from_name(name: &str) -> Option<Command> {
         "unset" => Command::Unset,
         "session_picker" => Command::OpenSessionPicker,
         "intent_detail" => Command::ToggleIntentDetail,
+        "verification" => Command::ToggleVerification,
         "edit_note" => Command::EditNote,
         _ => return None,
     })

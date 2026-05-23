@@ -74,10 +74,14 @@ fn apply(state: &mut AppState, command: Command) {
     match command {
         Command::Quit => state.should_quit = true,
         Command::ToggleHelp => state.show_help = !state.show_help,
-        Command::CloseOverlay => state.show_help = false,
+        Command::CloseOverlay => {
+            state.show_help = false;
+            state.show_verify = false;
+        }
 
         Command::OpenSessionPicker => open_picker(state),
         Command::ToggleIntentDetail => state.intent_detail = !state.intent_detail,
+        Command::ToggleVerification => toggle_verification(state),
         Command::Select => {}
 
         Command::CursorDown => move_cursor(state, state.cursor + 1),
@@ -168,6 +172,14 @@ fn set_verdict(state: &mut AppState, verdict: HunkVerdict) {
         state.review.set_verdict(href, verdict);
     }
     state.review_dirty = true;
+}
+
+/// Toggle the verification overlay, closing the help overlay if it was up.
+fn toggle_verification(state: &mut AppState) {
+    state.show_verify = !state.show_verify;
+    if state.show_verify {
+        state.show_help = false;
+    }
 }
 
 fn open_picker(state: &mut AppState) {

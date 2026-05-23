@@ -39,6 +39,69 @@ pub struct ToolEditEvent {
     pub parent_uuid: Option<String>,
 }
 
+/// Coarse classification of a shell command the agent ran, used to single out
+/// verification work (tests/build/lint) from incidental commands. Heuristic and
+/// advisory — see `session::commands::classify`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CommandKind {
+    Test,
+    Build,
+    Lint,
+    Format,
+    Vcs,
+    Run,
+    Other,
+}
+
+impl CommandKind {
+    /// Short lowercase label for the verification badge / overlay.
+    pub fn label(self) -> &'static str {
+        match self {
+            CommandKind::Test => "test",
+            CommandKind::Build => "build",
+            CommandKind::Lint => "lint",
+            CommandKind::Format => "fmt",
+            CommandKind::Vcs => "git",
+            CommandKind::Run => "run",
+            CommandKind::Other => "cmd",
+        }
+    }
+
+    /// Whether this kind is "verification" — the work that tells a reviewer the
+    /// change was checked. Drives the compact header summary.
+    pub fn is_verification(self) -> bool {
+        matches!(
+            self,
+            CommandKind::Test | CommandKind::Build | CommandKind::Lint | CommandKind::Format
+        )
+    }
+}
+
+/// The recovered result of a command. `Unknown` means no `tool_result` was seen
+/// for it (e.g. a live run still mid-command); outcome is otherwise inferred
+/// heuristically from the result content — see `session::commands::outcome`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CommandOutcome {
+    Ok,
+    Failed,
+    Unknown,
+}
+
+/// A shell command the agent ran during a run, paired with the recovered outcome
+/// of its result. Advisory: both `kind` and `outcome` are heuristics over the
+/// transcript, never authoritative.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CommandRun {
+    pub command: String,
+    pub description: Option<String>,
+    pub kind: CommandKind,
+    pub outcome: CommandOutcome,
+    /// Trimmed tail of the result output, for the verification detail overlay.
+    pub output_excerpt: String,
+    pub message_uuid: String,
+    pub timestamp: Option<Timestamp>,
+}
+
 /// A file's pre-run state. `backup_path: None` means the agent created the file.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Backup {
@@ -56,6 +119,8 @@ pub struct AgentRun {
     /// Path -> pre-run backup, folded from the run's `file-history-snapshot`s.
     pub snapshot: HashMap<PathBuf, Backup>,
     pub edits: Vec<ToolEditEvent>,
+    /// Shell commands the agent ran during the span, in transcript order.
+    pub commands: Vec<CommandRun>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

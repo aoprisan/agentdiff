@@ -25,6 +25,7 @@ pub fn render(frame: &mut Frame, area: Rect) {
         Line::from("  n            add / edit note"),
         Line::from("  s            session picker"),
         Line::from("  i            toggle intent detail"),
+        Line::from("  v            what the agent ran (verify)"),
         Line::from(""),
         Line::from("  ?            toggle this help"),
         Line::from("  Esc          close overlay"),

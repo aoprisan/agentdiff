@@ -9,8 +9,9 @@
 use std::collections::HashMap;
 
 use crate::domain::Timestamp;
-use crate::domain::session::{PermissionMode, ToolEditEvent};
+use crate::domain::session::{CommandOutcome, CommandRun, PermissionMode, ToolEditEvent};
 
+use super::commands;
 use super::transcript::{Record, TrackedBackup, edit_tool};
 
 /// A run before its backups are resolved to filesystem paths.
@@ -22,6 +23,10 @@ pub struct RawRun {
     pub edits: Vec<ToolEditEvent>,
     /// Latest `trackedFileBackups` seen within the span (path string → backup).
     pub raw_backups: HashMap<String, TrackedBackup>,
+    /// `Bash` commands run within the span, in transcript order.
+    pub commands: Vec<CommandRun>,
+    /// `tool_use` id → index in `commands`, awaiting its `tool_result`.
+    pending: HashMap<String, usize>,
 }
 
 impl RawRun {
@@ -32,6 +37,8 @@ impl RawRun {
             ended: None,
             edits: Vec::new(),
             raw_backups: HashMap::new(),
+            commands: Vec::new(),
+            pending: HashMap::new(),
         }
     }
 
@@ -41,6 +48,27 @@ impl RawRun {
         }
         if self.ended.is_none_or(|e| ts.0 > e.0) {
             self.ended = Some(ts);
+        }
+    }
+
+    /// Record a `Bash` tool call, leaving its outcome `Unknown` until the
+    /// matching `tool_result` is seen.
+    fn push_command(&mut self, cmd: CommandRun, id: Option<&str>) {
+        let idx = self.commands.len();
+        self.commands.push(cmd);
+        if let Some(id) = id {
+            self.pending.insert(id.to_string(), idx);
+        }
+    }
+
+    /// Resolve a pending command's outcome from its `tool_result`.
+    fn resolve_result(&mut self, tool_use_id: Option<&str>, output: &str, is_error: Option<bool>) {
+        let Some(idx) = tool_use_id.and_then(|id| self.pending.remove(id)) else {
+            return;
+        };
+        if let Some(cmd) = self.commands.get_mut(idx) {
+            cmd.outcome = commands::outcome(is_error, output);
+            cmd.output_excerpt = commands::excerpt(output);
         }
     }
 }
@@ -92,18 +120,46 @@ pub fn segment(records: &[Record]) -> Segmentation {
             if let Some(ts) = entry.timestamp.as_deref().and_then(parse_timestamp) {
                 run.observe(ts);
             }
-            if record.is_assistant() {
-                for (name, input) in entry.blocks().iter().filter_map(|b| b.as_tool_use()) {
-                    let Some(tool) = edit_tool(name) else { continue };
-                    let Some(path) = input.get("file_path").and_then(|v| v.as_str()) else {
-                        continue;
-                    };
+            let ts = entry.timestamp.as_deref().and_then(parse_timestamp);
+            for block in entry.blocks() {
+                // Edits (assistant turns) → the run's edit list.
+                if record.is_assistant()
+                    && let Some((name, input)) = block.as_tool_use()
+                    && let Some(tool) = edit_tool(name)
+                    && let Some(path) = input.get("file_path").and_then(|v| v.as_str())
+                {
                     run.edits.push(ToolEditEvent {
                         file_path: path.into(),
                         tool,
                         message_uuid: entry.uuid.clone().unwrap_or_default(),
                         parent_uuid: entry.parent_uuid.clone(),
                     });
+                }
+
+                // `Bash` calls → commands (outcome filled in when its result lands).
+                if let Some(("Bash", input)) = block.as_tool_use()
+                    && let Some(command) = input.get("command").and_then(|v| v.as_str())
+                {
+                    run.push_command(
+                        CommandRun {
+                            command: command.to_string(),
+                            description: input
+                                .get("description")
+                                .and_then(|v| v.as_str())
+                                .map(str::to_string),
+                            kind: commands::classify(command),
+                            outcome: CommandOutcome::Unknown,
+                            output_excerpt: String::new(),
+                            message_uuid: entry.uuid.clone().unwrap_or_default(),
+                            timestamp: ts,
+                        },
+                        block.tool_use_id(),
+                    );
+                }
+
+                // A `tool_result` (next user turn) resolves a pending command.
+                if let Some((tool_use_id, output, is_error)) = block.as_tool_result() {
+                    run.resolve_result(tool_use_id, &output, is_error);
                 }
             }
         }
@@ -180,6 +236,30 @@ mod tests {
         let jsonl = r#"{"type":"user","uuid":"u1","permissionMode":"default","message":{"content":"hi"}}"#;
         let seg = segment(&parse_reader(jsonl.as_bytes()));
         assert!(seg.runs.is_empty());
+    }
+
+    #[test]
+    fn captures_bash_commands_and_links_results_by_id() {
+        use crate::domain::session::{CommandKind, CommandOutcome};
+        // A resolved test command and an unresolved one (no tool_result → live).
+        let jsonl = r#"
+{"type":"user","uuid":"u1","permissionMode":"acceptEdits","timestamp":"2026-01-01T00:00:00Z","message":{"content":"go"}}
+{"type":"assistant","uuid":"a1","parentUuid":"u1","timestamp":"2026-01-01T00:00:05Z","message":{"content":[{"type":"tool_use","id":"b1","name":"Bash","input":{"command":"cargo test","description":"tests"}}]}}
+{"type":"user","uuid":"r1","parentUuid":"a1","timestamp":"2026-01-01T00:00:09Z","message":{"content":[{"type":"tool_result","tool_use_id":"b1","content":"test result: ok. 3 passed; 0 failed"}]}}
+{"type":"assistant","uuid":"a2","parentUuid":"r1","timestamp":"2026-01-01T00:00:12Z","message":{"content":[{"type":"tool_use","id":"b2","name":"Bash","input":{"command":"cargo build"}}]}}
+"#;
+        let seg = segment(&parse_reader(jsonl.as_bytes()));
+        let run = &seg.runs[0];
+        assert_eq!(run.commands.len(), 2);
+
+        assert_eq!(run.commands[0].kind, CommandKind::Test);
+        assert_eq!(run.commands[0].outcome, CommandOutcome::Ok);
+        assert!(run.commands[0].output_excerpt.contains("3 passed"));
+        assert_eq!(run.commands[0].description.as_deref(), Some("tests"));
+
+        // No result was seen for the build command → it stays Unknown.
+        assert_eq!(run.commands[1].kind, CommandKind::Build);
+        assert_eq!(run.commands[1].outcome, CommandOutcome::Unknown);
     }
 
     #[test]

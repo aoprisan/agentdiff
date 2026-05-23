@@ -5,3 +5,4 @@ pub mod intent_panel;
 pub mod notes;
 pub mod session_picker;
 pub mod statusbar;
+pub mod verification;

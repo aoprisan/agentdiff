@@ -1,0 +1,24 @@
+---
+source: src/tui/mod.rs
+expression: render_to_string(&state)
+---
+"┌ Files ─────────────┐┌ Diff — working tree vs HEAD (1 fi┐┌ Intent ────────────┐"
+"│▾ M src/main.rs  +1 ││▾ M src/main.rs  +1 -1            ││Add greeting, fix   │"
+"│                    ││  @@ -1,2 +1,2 @@ fn main()       ││off-by-one          │"
+"│                    ││  1   fn main() {                 ││agent run 1/1       │"
+"│                    ││  2 -     let x = 1;              ││(acceptEdits)       │"
+"│                    ││  2 +     let x = 2;              ││VERIFY ✓ test  ✗    │"
+"│ ┌ Verification — agent run 1/1 (acceptEdits) ──────────────────────────────┐ │"
+"│ │✓ test  cargo test --all                                                  │ │"
+"│ │✗ lint  cargo clippy --all-targets                                        │ │"
+"│ │        │ error: unused variable `x`                                      │ │"
+"│ │        │ Exit code 1                                                     │ │"
+"│ │                                                                          │ │"
+"│ │2 command(s) · 1 ok · 1 failed                                            │ │"
+"│ └──────────────────────────────────────────────────────────────────────────┘ │"
+"│                    ││                                  ││                    │"
+"│                    ││                                  ││                    │"
+"│                    ││                                  ││                    │"
+"│                    ││                                  ││                    │"
+"└────────────────────┘└──────────────────────────────────┘└────────────────────┘"
+" agentdiff   working tree   reviewed 0/1    a approve  x flag  n note  ? help  q"

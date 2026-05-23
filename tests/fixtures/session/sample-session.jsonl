@@ -5,7 +5,11 @@
 {"type":"user","uuid":"r1","parentUuid":"a1","timestamp":"2026-02-01T10:00:40Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"wrote 1 file"}]}}
 {"type":"assistant","uuid":"a2","parentUuid":"r1","timestamp":"2026-02-01T10:00:45Z","message":{"role":"assistant","content":[{"type":"text","text":"Now fixing the off-by-one in lib."},{"type":"tool_use","name":"Edit","input":{"file_path":"/repo/src/lib.rs","old_string":"i <= n","new_string":"i < n"}}]}}
 {"type":"assistant","uuid":"a3","parentUuid":"a2","timestamp":"2026-02-01T10:00:50Z","message":{"role":"assistant","content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/outside/thing.rs","old_string":"a","new_string":"b"}}]}}
-{"type":"user","uuid":"u3","parentUuid":"a3","permissionMode":"default","timestamp":"2026-02-01T10:01:00Z","message":{"role":"user","content":"thanks"}}
+{"type":"assistant","uuid":"a3b","parentUuid":"a3","timestamp":"2026-02-01T10:00:52Z","message":{"role":"assistant","content":[{"type":"text","text":"Let me run the tests."},{"type":"tool_use","id":"bash1","name":"Bash","input":{"command":"cargo test --all","description":"run the test suite"}}]}}
+{"type":"user","uuid":"rb1","parentUuid":"a3b","timestamp":"2026-02-01T10:00:54Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"bash1","content":"running 12 tests\ntest result: ok. 12 passed; 0 failed"}]}}
+{"type":"assistant","uuid":"a3c","parentUuid":"rb1","timestamp":"2026-02-01T10:00:56Z","message":{"role":"assistant","content":[{"type":"tool_use","id":"bash2","name":"Bash","input":{"command":"cargo clippy --all-targets","description":"lint"}}]}}
+{"type":"user","uuid":"rb2","parentUuid":"a3c","timestamp":"2026-02-01T10:00:58Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"bash2","content":"warning: unused variable `x`\nExit code 1","is_error":false}]}}
+{"type":"user","uuid":"u3","parentUuid":"rb2","permissionMode":"default","timestamp":"2026-02-01T10:01:00Z","message":{"role":"user","content":"thanks"}}
 {"type":"ai-title","aiTitle":"Add greeting, fix off-by-one","sessionId":"fixture"}
 {"type":"last-prompt","lastPrompt":"thanks","leafUuid":"u3","sessionId":"fixture"}
 {"type":"some-future-record","detail":{"unknown":true}}

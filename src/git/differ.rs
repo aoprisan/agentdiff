@@ -669,6 +669,7 @@ mod tests {
             ended: None,
             snapshot,
             edits: Vec::new(),
+            commands: Vec::new(),
         };
 
         let repo = Repo::discover(repo_dir.path()).unwrap();

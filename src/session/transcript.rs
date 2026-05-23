@@ -111,7 +111,8 @@ impl Default for Content {
     }
 }
 
-/// A content block. `thinking`, `tool_result`, etc. fall through to `Other`.
+/// A content block. `thinking` and other future block types fall through to
+/// `Other`.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Block {
@@ -119,10 +120,25 @@ pub enum Block {
         text: String,
     },
     ToolUse {
+        /// Tool-call id used to link a later `tool_result` back to this call.
+        #[serde(default)]
+        id: Option<String>,
         #[serde(default)]
         name: String,
         #[serde(default)]
         input: serde_json::Value,
+    },
+    ToolResult {
+        #[serde(default)]
+        tool_use_id: Option<String>,
+        /// Either a plain string or a list of content blocks; extracted via
+        /// [`result_text`].
+        #[serde(default)]
+        content: serde_json::Value,
+        /// Tool-level error flag. Unreliable for command exit status (often
+        /// absent); failures usually surface as `Exit code N` in `content`.
+        #[serde(default)]
+        is_error: Option<bool>,
     },
     #[serde(other)]
     Other,
@@ -139,9 +155,43 @@ impl Block {
     /// `(tool_name, input)` when this block is a `tool_use`.
     pub fn as_tool_use(&self) -> Option<(&str, &serde_json::Value)> {
         match self {
-            Block::ToolUse { name, input } => Some((name.as_str(), input)),
+            Block::ToolUse { name, input, .. } => Some((name.as_str(), input)),
             _ => None,
         }
+    }
+
+    /// The `tool_use` id of this call, when present.
+    pub fn tool_use_id(&self) -> Option<&str> {
+        match self {
+            Block::ToolUse { id, .. } => id.as_deref(),
+            _ => None,
+        }
+    }
+
+    /// `(tool_use_id, output_text, is_error)` when this block is a `tool_result`.
+    pub fn as_tool_result(&self) -> Option<(Option<&str>, String, Option<bool>)> {
+        match self {
+            Block::ToolResult {
+                tool_use_id,
+                content,
+                is_error,
+            } => Some((tool_use_id.as_deref(), result_text(content), *is_error)),
+            _ => None,
+        }
+    }
+}
+
+/// Flatten a `tool_result`'s `content` into plain text. CC writes either a bare
+/// string or a list of content blocks; anything else yields an empty string.
+pub fn result_text(content: &serde_json::Value) -> String {
+    match content {
+        serde_json::Value::String(s) => s.clone(),
+        serde_json::Value::Array(items) => items
+            .iter()
+            .filter_map(|item| item.get("text").and_then(|t| t.as_str()))
+            .collect::<Vec<_>>()
+            .join("\n"),
+        _ => String::new(),
     }
 }
 
@@ -243,6 +293,37 @@ mod tests {
         let user = records[0].as_entry().unwrap();
         assert_eq!(user.content_text(), Some("do the thing"));
         assert_eq!(user.permission_mode.as_deref(), Some("default"));
+    }
+
+    #[test]
+    fn parses_bash_tool_use_and_tool_result() {
+        let jsonl = concat!(
+            r#"{"type":"assistant","uuid":"a1","message":{"content":[{"type":"tool_use","id":"toolu_1","name":"Bash","input":{"command":"cargo test","description":"run tests"}}]}}"#,
+            "\n",
+            r#"{"type":"user","uuid":"r1","parentUuid":"a1","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"test result: ok","is_error":false}]}}"#,
+        );
+        let records = parse_reader(jsonl.as_bytes());
+
+        let use_block = &records[0].as_entry().unwrap().blocks()[0];
+        assert_eq!(use_block.as_tool_use().unwrap().0, "Bash");
+        assert_eq!(use_block.tool_use_id(), Some("toolu_1"));
+
+        let result_block = &records[1].as_entry().unwrap().blocks()[0];
+        let (id, text, is_error) = result_block.as_tool_result().unwrap();
+        assert_eq!(id, Some("toolu_1"));
+        assert_eq!(text, "test result: ok");
+        assert_eq!(is_error, Some(false));
+    }
+
+    #[test]
+    fn tool_result_content_array_flattens_to_text() {
+        let line = r#"{"type":"user","uuid":"r1","message":{"content":[{"type":"tool_result","tool_use_id":"t","content":[{"type":"text","text":"line one"},{"type":"text","text":"line two"}]}]}}"#;
+        let records = parse_reader(line.as_bytes());
+        let (_, text, is_error) = records[0].as_entry().unwrap().blocks()[0]
+            .as_tool_result()
+            .unwrap();
+        assert_eq!(text, "line one\nline two");
+        assert_eq!(is_error, None);
     }
 
     #[test]

@@ -6,6 +6,7 @@
 //! back to a plain working-tree diff) whenever data is missing or unparseable.
 
 pub mod backups;
+pub mod commands;
 pub mod intent;
 pub mod locate;
 pub mod runs;
@@ -81,6 +82,7 @@ pub fn load_session(
             ended: raw.ended,
             snapshot: backups::resolve(&raw.raw_backups, &file_history_dir, repo_root),
             edits: raw.edits.clone(),
+            commands: raw.commands.clone(),
         })
         .collect();
 
@@ -121,7 +123,7 @@ fn select_run(runs: &[AgentRun], run_index: Option<u32>) -> Option<RunId> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::domain::session::{EditTool, PermissionMode};
+    use crate::domain::session::{CommandKind, CommandOutcome, EditTool, PermissionMode};
     use std::collections::BTreeMap;
     use std::path::PathBuf;
 
@@ -145,6 +147,7 @@ mod tests {
                 ended: raw.ended,
                 snapshot: backups::resolve(&raw.raw_backups, file_history, repo),
                 edits: raw.edits.clone(),
+                commands: raw.commands.clone(),
             })
             .collect()
     }
@@ -152,9 +155,9 @@ mod tests {
     #[test]
     fn fixture_parses_without_crashing_on_unknown_or_truncated_lines() {
         let records = fixture_records();
-        // The 10 well-formed lines parse (one is the `some-future-record` →
+        // The 14 well-formed lines parse (one is the `some-future-record` →
         // Other); the truncated trailing line is dropped.
-        assert_eq!(records.len(), 11);
+        assert_eq!(records.len(), 15);
         assert!(records.iter().any(|r| matches!(r, transcript::Record::Other)));
     }
 
@@ -169,6 +172,15 @@ mod tests {
         assert_eq!(run.edits[0].tool, EditTool::Write);
         assert!(run.raw_backups.contains_key("/repo/src/greet.rs"));
         assert_eq!(seg.title.as_deref(), Some("Add greeting, fix off-by-one"));
+
+        // The two Bash commands are captured with linked outcomes: the test
+        // passed; clippy failed via an `Exit code 1` line despite is_error=false.
+        assert_eq!(run.commands.len(), 2);
+        assert_eq!(run.commands[0].kind, CommandKind::Test);
+        assert_eq!(run.commands[0].outcome, CommandOutcome::Ok);
+        assert_eq!(run.commands[1].kind, CommandKind::Lint);
+        assert_eq!(run.commands[1].outcome, CommandOutcome::Failed);
+        assert!(run.commands[1].output_excerpt.contains("Exit code 1"));
     }
 
     #[test]
@@ -216,5 +228,10 @@ mod tests {
         assert!(ctx.intent.contains_key(&PathBuf::from("src/greet.rs")));
         assert!(ctx.intent.contains_key(&PathBuf::from("src/lib.rs")));
         assert_eq!(ctx.session.title.as_deref(), Some("Add greeting, fix off-by-one"));
+
+        // Verification commands survive into the selected run.
+        let run = ctx.selected().expect("a run is selected");
+        assert_eq!(run.commands.len(), 2);
+        assert_eq!(run.commands[1].outcome, CommandOutcome::Failed);
     }
 }
