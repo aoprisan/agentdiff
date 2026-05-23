@@ -1,8 +1,10 @@
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Flex, Layout, Rect};
-use ratatui::style::Stylize;
+use ratatui::style::{Style, Stylize};
 use ratatui::text::Line;
 use ratatui::widgets::{Block, Clear, Paragraph};
+
+use crate::tui::theme;
 
 /// Centered help overlay, drawn on top of the current view when toggled.
 pub fn render(frame: &mut Frame, area: Rect) {
@@ -36,7 +38,9 @@ pub fn render(frame: &mut Frame, area: Rect) {
     // Clear the cells underneath so the overlay isn't drawn over the panes.
     frame.render_widget(Clear, popup);
 
-    let block = Block::bordered().title(" Help ");
+    let block = Block::bordered()
+        .title(" Help ")
+        .style(Style::default().bg(theme::bg()).fg(theme::fg()));
     frame.render_widget(Paragraph::new(lines).block(block), popup);
 }
 

@@ -216,7 +216,7 @@ fn text_spans(
     let default_fg = match kind {
         LineKind::Added => theme::added_fg(),
         LineKind::Removed => theme::removed_fg(),
-        LineKind::Context => Color::Reset,
+        LineKind::Context => theme::fg(),
     };
 
     let mut spans = Vec::new();

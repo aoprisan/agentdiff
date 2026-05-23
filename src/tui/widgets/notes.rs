@@ -20,7 +20,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_widget(Clear, popup);
 
     let path = edit.href.path.display().to_string();
-    let block = Block::bordered().title(format!(" Note — {path} "));
+    let block = Block::bordered()
+        .title(format!(" Note — {path} "))
+        .style(Style::default().bg(theme::bg()).fg(theme::fg()));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 

@@ -16,7 +16,9 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     let popup = centered(area, width, height);
     frame.render_widget(Clear, popup);
 
-    let block = Block::bordered().title(" Sessions (newest first) ");
+    let block = Block::bordered()
+        .title(" Sessions (newest first) ")
+        .style(Style::default().bg(theme::bg()).fg(theme::fg()));
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 

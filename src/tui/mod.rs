@@ -272,6 +272,17 @@ fn save_review(state: &AppState) {
 }
 
 fn render(frame: &mut Frame, state: &AppState, highlighter: &mut Highlighter) {
+    // Paint the palette's canvas first. Widgets render on top with transparent
+    // (unset) backgrounds, so context lines, borders and gaps pick up the theme
+    // background instead of the terminal's own. `Color::Reset` is a no-op that
+    // defers to the terminal, preserving the default theme's look.
+    use ratatui::style::Style;
+    use ratatui::widgets::Block;
+    frame.render_widget(
+        Block::default().style(Style::default().bg(theme::bg()).fg(theme::fg())),
+        frame.area(),
+    );
+
     match state.view {
         View::Review => render_review(frame, state, highlighter),
     }
@@ -408,6 +419,32 @@ mod tests {
     #[test]
     fn renders_diff_pane() {
         insta::assert_snapshot!(render_to_string(&sample_state()));
+    }
+
+    #[test]
+    fn solarized_paints_the_whole_canvas_background() {
+        // The only test that installs a palette, so this OnceLock set always wins
+        // and the assertion is deterministic regardless of test ordering.
+        theme::install(theme::Palette::solarized_dark());
+        assert_eq!(theme::bg(), theme::Palette::solarized_dark().bg);
+
+        let state = sample_state();
+        let mut terminal = Terminal::new(TestBackend::new(80, 20)).unwrap();
+        let mut hl = Highlighter::new();
+        terminal
+            .draw(|frame| render(frame, &state, &mut hl))
+            .unwrap();
+
+        let base03 = ratatui::style::Color::Rgb(0x00, 0x2b, 0x36);
+        let buf = terminal.backend().buffer();
+        let painted = buf.content().iter().filter(|c| c.bg == base03).count();
+        let total = buf.content().len();
+        // The canvas is painted edge to edge; only the cursor row and word-diff
+        // emphasis use a different bg, so the vast majority of cells are base03.
+        assert!(
+            painted > total * 3 / 4,
+            "expected most cells painted base03, got {painted}/{total}"
+        );
     }
 
     #[test]

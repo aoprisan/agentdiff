@@ -17,6 +17,11 @@ const fn rgb(r: u8, g: u8, b: u8) -> Color {
 /// The full set of UI colors plus the syntect syntax theme that pairs with them.
 #[derive(Debug, Clone, Copy)]
 pub struct Palette {
+    /// Overall canvas background. `Color::Reset` keeps the terminal's own bg.
+    pub bg: Color,
+    /// Default body-text foreground (context lines, empty regions, borders).
+    /// `Color::Reset` defers to the terminal's default foreground.
+    pub fg: Color,
     pub added_fg: Color,
     pub removed_fg: Color,
     pub added_sign: Color,
@@ -38,6 +43,9 @@ impl Palette {
     /// The original built-in dark palette.
     pub const fn default_dark() -> Self {
         Palette {
+            // Keep the terminal's own background/foreground for the default theme.
+            bg: Color::Reset,
+            fg: Color::Reset,
             added_fg: rgb(0xa3, 0xd9, 0x77),
             removed_fg: rgb(0xe0, 0x6c, 0x75),
             added_sign: rgb(0x6a, 0x99, 0x55),
@@ -58,6 +66,8 @@ impl Palette {
     /// Solarized dark (Ethan Schoonover) on a base03 background.
     pub const fn solarized_dark() -> Self {
         Palette {
+            bg: SOL_BASE03,
+            fg: SOL_BASE0,
             added_fg: SOL_GREEN,
             removed_fg: SOL_RED,
             added_sign: SOL_GREEN,
@@ -78,6 +88,8 @@ impl Palette {
     /// Solarized light on a base3 background.
     pub const fn solarized_light() -> Self {
         Palette {
+            bg: SOL_BASE3,
+            fg: SOL_BASE00,
             added_fg: SOL_GREEN,
             removed_fg: SOL_RED,
             added_sign: SOL_GREEN,
@@ -140,10 +152,14 @@ const SOL_RED: Color = rgb(0xdc, 0x32, 0x2f);
 const SOL_BLUE: Color = rgb(0x26, 0x8b, 0xd2);
 const SOL_CYAN: Color = rgb(0x2a, 0xa1, 0x98);
 const SOL_GREEN: Color = rgb(0x85, 0x99, 0x00);
+const SOL_BASE03: Color = rgb(0x00, 0x2b, 0x36); // darkest — dark-theme background
 const SOL_BASE02: Color = rgb(0x07, 0x36, 0x42);
 const SOL_BASE01: Color = rgb(0x58, 0x6e, 0x75);
+const SOL_BASE00: Color = rgb(0x65, 0x7b, 0x83); // light-theme body text
+const SOL_BASE0: Color = rgb(0x83, 0x94, 0x96); //  dark-theme body text
 const SOL_BASE1: Color = rgb(0x93, 0xa1, 0xa1);
 const SOL_BASE2: Color = rgb(0xee, 0xe8, 0xd5);
+const SOL_BASE3: Color = rgb(0xfd, 0xf6, 0xe3); // lightest — light-theme background
 
 static DEFAULT: Palette = Palette::default_dark();
 static PALETTE: OnceLock<Palette> = OnceLock::new();
@@ -157,6 +173,14 @@ fn current() -> &'static Palette {
     PALETTE.get().unwrap_or(&DEFAULT)
 }
 
+/// Overall canvas background; painted once behind every pane.
+pub fn bg() -> Color {
+    current().bg
+}
+/// Default body-text foreground (context lines, borders, empty regions).
+pub fn fg() -> Color {
+    current().fg
+}
 pub fn added_fg() -> Color {
     current().added_fg
 }
@@ -236,6 +260,18 @@ mod tests {
         // Solarized uses the canonical green/red accents.
         assert_eq!(Palette::solarized_dark().added_fg, SOL_GREEN);
         assert_eq!(Palette::solarized_dark().removed_fg, SOL_RED);
+    }
+
+    #[test]
+    fn solarized_paints_a_real_canvas_but_default_defers_to_terminal() {
+        // The whole point of Solarized: it owns the background + body text.
+        assert_eq!(Palette::solarized_dark().bg, SOL_BASE03);
+        assert_eq!(Palette::solarized_dark().fg, SOL_BASE0);
+        assert_eq!(Palette::solarized_light().bg, SOL_BASE3);
+        assert_eq!(Palette::solarized_light().fg, SOL_BASE00);
+        // The default theme must stay transparent over the user's terminal.
+        assert_eq!(Palette::default_dark().bg, Color::Reset);
+        assert_eq!(Palette::default_dark().fg, Color::Reset);
     }
 
     #[test]
