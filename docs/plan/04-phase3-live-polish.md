@@ -35,3 +35,13 @@ Risk engine (Phase 4), action layer (Phase 5).
 
 ## Definition of done
 The tool is comfortable to leave open during an agent run and adapts to each user's keys/colors. Commit.
+
+## Implementation notes
+
+- **Worker + watch concurrency.** `watch/mod.rs` runs a `notify-debouncer-full` watcher (250ms) on the tree + active transcript, filtering through the repo gitignore and always skipping `.git`, emitting `AppEvent::FsChanged`. A worker thread opens its **own** libgit2 handle (git2's `Repository` is `!Send`) and rebuilds the diff bundle (`app::build_bundle`) on demand; each result carries a generation, and `AppState.generation` drops superseded ones. The main thread only renders + applies results.
+- **Re-anchoring is automatic.** Verdicts/notes are keyed by `HunkRef` fingerprint, so they re-attach across a re-diff with no remapping; a vanished fingerprint surfaces as "changed since reviewed". The cursor re-anchors to the same hunk by fingerprint (`AppState::apply_rediff`), and the highlight LRU is cleared since `(file,hunk,line)` indices shift.
+- **Live indicator.** A run still open at end-of-transcript (no closing non-autonomous turn) has `ended: None` and shows `● live` in the status bar + intent header. (Not observable in this environment, which records no autonomous runs — validated by unit test.)
+- **Config.** `~/.config/agentdiff/config.toml` → `[theme] name` (built-in palette: `default`, `solarized-dark`, `solarized-light`), `syntax` (override the syntect theme; defaults to the palette's pairing), `added/removed/intent` (`#rrggbb` per-color overlays), and `[keys] command = "char"` (additive single-key rebindings). A palette re-skins the whole UI; it's threaded through `theme::install`/`Palette`, `Highlighter::with_theme`, and a `Keymap`, all reapplied across session switches.
+- **Ranges.** `--range A..B` (`diff_range`, tree-to-tree) and `--staged` (`diff_worktree_vs_index`, HEAD-to-index) reuse the same render/review UI; missing `--range` side defaults to `HEAD`.
+- **Deferred:** mouse support (marked optional in scope).
+- The live watch/worker path can't be exercised at runtime in this sandbox (no TTY); its pieces — gitignore filtering, cursor/verdict re-anchoring, range/staged diffs, live detection, config parsing/keymap override — are covered by unit tests.

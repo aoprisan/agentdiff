@@ -27,6 +27,10 @@ pub struct Args {
     #[arg(long)]
     pub range: Option<String>,
 
+    /// Diff staged changes (index vs HEAD) instead of the working tree.
+    #[arg(long)]
+    pub staged: bool,
+
     /// Ignore Claude Code session data; diff working tree vs HEAD (Phase 2).
     #[arg(long)]
     pub no_session: bool,

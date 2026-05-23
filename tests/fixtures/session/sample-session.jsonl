@@ -1,0 +1,12 @@
+{"type":"user","uuid":"u1","parentUuid":null,"permissionMode":"default","timestamp":"2026-02-01T10:00:00Z","sessionId":"fixture","message":{"role":"user","content":"Add a greeting and fix an off-by-one"}}
+{"type":"user","uuid":"u2","parentUuid":"u1","permissionMode":"acceptEdits","timestamp":"2026-02-01T10:00:30Z","sessionId":"fixture","message":{"role":"user","content":"go ahead"}}
+{"type":"assistant","uuid":"a1","parentUuid":"u2","timestamp":"2026-02-01T10:00:35Z","message":{"role":"assistant","content":[{"type":"thinking","thinking":"first the greeting"},{"type":"text","text":"I'll add the greeting function."},{"type":"tool_use","name":"Write","input":{"file_path":"/repo/src/greet.rs","content":"pub fn greet() {}\n"}}]}}
+{"type":"file-history-snapshot","messageId":"a1","snapshot":{"messageId":"a1","trackedFileBackups":{"/repo/src/greet.rs":{"backupFileName":null,"version":0},"/repo/src/lib.rs":{"backupFileName":"lib.rs.v1","version":1},"/home/user/CLAUDE.md":{"backupFileName":"claude.v1","version":1}},"timestamp":"2026-02-01T10:00:36Z"}}
+{"type":"user","uuid":"r1","parentUuid":"a1","timestamp":"2026-02-01T10:00:40Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"wrote 1 file"}]}}
+{"type":"assistant","uuid":"a2","parentUuid":"r1","timestamp":"2026-02-01T10:00:45Z","message":{"role":"assistant","content":[{"type":"text","text":"Now fixing the off-by-one in lib."},{"type":"tool_use","name":"Edit","input":{"file_path":"/repo/src/lib.rs","old_string":"i <= n","new_string":"i < n"}}]}}
+{"type":"assistant","uuid":"a3","parentUuid":"a2","timestamp":"2026-02-01T10:00:50Z","message":{"role":"assistant","content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/outside/thing.rs","old_string":"a","new_string":"b"}}]}}
+{"type":"user","uuid":"u3","parentUuid":"a3","permissionMode":"default","timestamp":"2026-02-01T10:01:00Z","message":{"role":"user","content":"thanks"}}
+{"type":"ai-title","aiTitle":"Add greeting, fix off-by-one","sessionId":"fixture"}
+{"type":"last-prompt","lastPrompt":"thanks","leafUuid":"u3","sessionId":"fixture"}
+{"type":"some-future-record","detail":{"unknown":true}}
+{"type":"assistant","uuid":"a4","message":{"role":"assi

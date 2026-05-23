@@ -1,0 +1,18 @@
+---
+source: src/session/mod.rs
+expression: sorted
+---
+{
+  "src/greet.rs": {
+    "file_path": "src/greet.rs",
+    "text": "I'll add the greeting function.",
+    "source_uuid": "a1",
+    "confidence": 1.0
+  },
+  "src/lib.rs": {
+    "file_path": "src/lib.rs",
+    "text": "Now fixing the off-by-one in lib.",
+    "source_uuid": "a2",
+    "confidence": 1.0
+  }
+}

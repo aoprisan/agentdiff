@@ -7,12 +7,15 @@ mod app;
 mod cli;
 mod config;
 // Domain types (and their convenience re-exports) are defined ahead of their
-// first use — git diffing lands in Phase 1 — so silence dead-code/unused-import
-// warnings for the contract module only.
+// first use — the Claude-session producers land in Phase 2 — so silence
+// dead-code/unused-import warnings for the contract module only.
 #[allow(dead_code, unused_imports)]
 mod domain;
 mod error;
+mod git;
+mod session;
 mod tui;
+mod watch;
 
 use std::path::Path;
 
@@ -31,7 +34,7 @@ fn main() -> anyhow::Result<()> {
     );
     tracing::debug!(?args, "parsed args");
 
-    tui::run(args)?;
+    tui::run(args, paths.state_dir)?;
 
     tracing::info!("agentdiff exiting cleanly");
     Ok(())
