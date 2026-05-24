@@ -7,18 +7,63 @@
 
 pub mod backups;
 pub mod commands;
+pub mod copilot;
 pub mod intent;
 pub mod locate;
 pub mod runs;
 pub mod transcript;
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::domain::Timestamp;
 use crate::domain::diff::DiffBase;
-use crate::domain::session::{AgentRun, AgentSession, RunId};
+use crate::domain::session::{AgentRun, AgentSession, Provider, RunId};
 
 use intent::IntentMap;
+
+/// The per-provider data directories to read session data from. Either may be
+/// `None` when the home directory can't be resolved or the agent isn't installed.
+#[derive(Debug, Clone, Default)]
+pub struct AgentDirs {
+    /// `~/.claude`.
+    pub claude: Option<PathBuf>,
+    /// `~/.copilot`.
+    pub copilot: Option<PathBuf>,
+}
+
+impl AgentDirs {
+    /// Discover the default per-provider directories under the user's home.
+    pub fn discover() -> Self {
+        Self {
+            claude: locate::default_claude_dir(),
+            copilot: copilot::default_dir(),
+        }
+    }
+
+    fn for_provider(&self, provider: Provider) -> Option<&Path> {
+        match provider {
+            Provider::Claude => self.claude.as_deref(),
+            Provider::Copilot => self.copilot.as_deref(),
+        }
+    }
+}
+
+/// Load the session for `repo_root` from the requested provider's data.
+/// Returns `None` (caller falls back to a plain working-tree diff) when the
+/// provider's directory is absent or yields no usable session.
+pub fn load(
+    provider: Provider,
+    dirs: &AgentDirs,
+    repo_root: &Path,
+    session_id: Option<&str>,
+    run_index: Option<u32>,
+) -> Option<SessionContext> {
+    let dir = dirs.for_provider(provider)?;
+    match provider {
+        Provider::Claude => load_session(dir, repo_root, session_id, run_index),
+        Provider::Copilot => copilot::load_session(dir, repo_root, session_id, run_index),
+    }
+}
 
 /// Everything Phase 2 derives from one session, ready for the UI.
 pub struct SessionContext {
@@ -90,6 +135,7 @@ pub fn load_session(
 
     let session = AgentSession {
         id: entry.id.clone(),
+        provider: Provider::Claude,
         project_slug: locate::slug_for(repo_root),
         file: entry.path,
         runs,

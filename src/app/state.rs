@@ -3,7 +3,7 @@ use std::path::PathBuf;
 
 use crate::domain::diff::Diff;
 use crate::domain::review::{HunkRef, HunkVerdict, ReviewState};
-use crate::domain::session::{CommandRun, Intent};
+use crate::domain::session::{CommandRun, Intent, Provider};
 
 use super::keymap::Keymap;
 use super::rows::{self, FlatDiff, Row};
@@ -19,6 +19,8 @@ pub enum View {
 /// Header metadata for the loaded session, shown above the intent panel.
 #[derive(Debug, Clone, Default)]
 pub struct SessionSummary {
+    /// Which agent produced the session, shown as a badge.
+    pub provider: Provider,
     /// Session id, used to locate the transcript to watch for live updates.
     pub id: String,
     pub title: Option<String>,

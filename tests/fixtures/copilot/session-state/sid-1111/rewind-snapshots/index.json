@@ -1,0 +1,25 @@
+{
+  "version": 1,
+  "snapshots": [
+    {
+      "snapshotId": "snap-1",
+      "eventId": "e2",
+      "userMessage": "tidy up lib.rs",
+      "timestamp": "2026-05-20T10:00:02Z",
+      "fileCount": 1,
+      "gitCommit": "abc123",
+      "gitBranch": "main",
+      "files": {
+        "k1": {
+          "gitStatus": "M ",
+          "contentHash": "git-sha1:deadbeef",
+          "backupFile": "lib-before",
+          "size": 42
+        }
+      }
+    }
+  ],
+  "filePathMap": {
+    "k1": "/repo/src/lib.rs"
+  }
+}

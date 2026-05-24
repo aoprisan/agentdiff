@@ -19,8 +19,9 @@ use ratatui::layout::Rect;
 use crate::app::{self, AppEvent, AppState, Keymap, Selectors, View, update};
 use crate::cli::Args;
 use crate::config::{self, ThemeConfig};
+use crate::domain::session::Provider;
 use crate::git::Repo;
-use crate::session::locate;
+use crate::session::{AgentDirs, copilot, locate};
 use highlight::Highlighter;
 
 /// A request to the background re-diff worker.
@@ -37,7 +38,7 @@ pub fn run(args: Args, state_dir: PathBuf) -> anyhow::Result<()> {
     let start = args.path.clone().unwrap_or_else(|| PathBuf::from("."));
     let repo = Repo::discover(&start)
         .with_context(|| format!("opening a git repository at {}", start.display()))?;
-    let claude_dir = locate::default_claude_dir();
+    let dirs = AgentDirs::discover();
 
     // User config: theme is global; the syntax theme and keymap are threaded
     // through so they survive a session switch.
@@ -52,13 +53,14 @@ pub fn run(args: Args, state_dir: PathBuf) -> anyhow::Result<()> {
         .unwrap_or_else(|| palette.syntax.to_string());
 
     let selectors = Selectors {
+        provider: args.provider(),
         no_session: args.no_session,
         session_id: args.session,
         run_index: args.run,
         range: args.range.as_deref().map(parse_range),
         staged: args.staged,
     };
-    let mut state = app::build_state(&repo, &state_dir, claude_dir.as_deref(), &selectors)?;
+    let mut state = app::build_state(&repo, &state_dir, &dirs, &selectors)?;
     state.keymap = keymap.clone();
 
     install_panic_hook();
@@ -70,7 +72,7 @@ pub fn run(args: Args, state_dir: PathBuf) -> anyhow::Result<()> {
         &mut highlighter,
         &repo,
         &state_dir,
-        claude_dir.as_deref(),
+        dirs,
         selectors,
         keymap,
         syntax_theme,
@@ -89,7 +91,7 @@ fn event_loop(
     highlighter: &mut Highlighter,
     repo: &Repo,
     state_dir: &Path,
-    claude_dir: Option<&Path>,
+    dirs: AgentDirs,
     initial_selectors: Selectors,
     keymap: Keymap,
     syntax_theme: String,
@@ -112,11 +114,11 @@ fn event_loop(
     // Background re-diff worker: opens its own (non-Send) repo handle and rebuilds
     // the diff bundle on demand, tagging each result with its request generation.
     let (req_tx, req_rx) = unbounded::<DiffRequest>();
-    spawn_worker(repo.workdir().to_path_buf(), claude_dir.map(Path::to_path_buf), req_rx, tx.clone());
+    spawn_worker(repo.workdir().to_path_buf(), dirs.clone(), req_rx, tx.clone());
 
     let mut selectors = initial_selectors;
     // Watch the tree + active transcript; the guard must outlive the loop.
-    let mut _watch = spawn_watch(state, claude_dir, repo.workdir(), tx.clone());
+    let mut _watch = spawn_watch(state, &dirs, repo.workdir(), tx.clone());
 
     while !state.should_quit {
         // Refresh the diff-pane height so paging/scrolling matches what's drawn.
@@ -149,11 +151,11 @@ fn event_loop(
         }
 
         if let Some(id) = state.pending_switch.take() {
-            switch_session(state, repo, state_dir, claude_dir, &mut selectors, id);
+            switch_session(state, repo, state_dir, &dirs, &mut selectors, id);
             // Reapply config that lives outside the rebuilt AppState / Highlighter.
             state.keymap = keymap.clone();
             *highlighter = Highlighter::with_theme(&syntax_theme);
-            _watch = spawn_watch(state, claude_dir, repo.workdir(), tx.clone());
+            _watch = spawn_watch(state, &dirs, repo.workdir(), tx.clone());
         }
     }
     Ok(())
@@ -178,7 +180,7 @@ fn resolve_palette(theme_config: &ThemeConfig) -> theme::Palette {
 
 fn spawn_worker(
     workdir: PathBuf,
-    claude_dir: Option<PathBuf>,
+    dirs: AgentDirs,
     req_rx: Receiver<DiffRequest>,
     tx: Sender<AppEvent>,
 ) {
@@ -191,7 +193,7 @@ fn spawn_worker(
             }
         };
         while let Ok(req) = req_rx.recv() {
-            match app::build_bundle(&repo, claude_dir.as_deref(), &req.selectors) {
+            match app::build_bundle(&repo, &dirs, &req.selectors) {
                 Ok(bundle) => {
                     let event = AppEvent::DiffReady {
                         generation: req.generation,
@@ -209,43 +211,49 @@ fn spawn_worker(
 
 fn spawn_watch(
     state: &AppState,
-    claude_dir: Option<&Path>,
+    dirs: &AgentDirs,
     workdir: &Path,
     tx: Sender<AppEvent>,
 ) -> Option<crate::watch::Watch> {
-    let session_file = active_session_file(state, claude_dir, workdir);
+    let session_file = active_session_file(state, dirs, workdir);
     crate::watch::spawn(workdir, session_file, tx)
 }
 
-fn active_session_file(
-    state: &AppState,
-    claude_dir: Option<&Path>,
-    workdir: &Path,
-) -> Option<PathBuf> {
-    let id = state.session.as_ref()?.id.as_str();
-    locate::find_session(claude_dir?, workdir, id).map(|e| e.path)
+/// The transcript file of the loaded session, watched for live updates. Resolved
+/// for whichever provider produced it.
+fn active_session_file(state: &AppState, dirs: &AgentDirs, workdir: &Path) -> Option<PathBuf> {
+    let session = state.session.as_ref()?;
+    let id = session.id.as_str();
+    match session.provider {
+        Provider::Claude => locate::find_session(dirs.claude.as_deref()?, workdir, id).map(|e| e.path),
+        Provider::Copilot => {
+            copilot::find_session(dirs.copilot.as_deref()?, workdir, id).map(|e| e.events)
+        }
+    }
 }
 
 /// Reload review state for a different session picked in the picker, and point
 /// future re-diffs at it. The outgoing verdicts are persisted first; the caller
-/// reapplies keymap/highlighter (which live outside the rebuilt `AppState`).
+/// reapplies keymap/highlighter (which live outside the rebuilt `AppState`). The
+/// active provider is preserved across the switch.
 fn switch_session(
     state: &mut AppState,
     repo: &Repo,
     state_dir: &Path,
-    claude_dir: Option<&Path>,
+    dirs: &AgentDirs,
     selectors: &mut Selectors,
     session_id: String,
 ) {
     save_review(state);
     *selectors = Selectors {
+        provider: selectors.provider,
         no_session: false,
         session_id: Some(session_id.clone()),
         run_index: None,
         range: None,
         staged: false,
     };
-    match app::build_state(repo, state_dir, claude_dir, selectors) {
+    match app::build_state(repo, state_dir, dirs, selectors) {
         Ok(new_state) => *state = new_state,
         Err(e) => tracing::warn!(error = %e, session = session_id, "failed to switch session"),
     }
@@ -495,6 +503,7 @@ mod tests {
 
         let mut state = sample_state();
         state.session = Some(SessionSummary {
+            provider: Provider::Claude,
             id: "11111111-aaaa".into(),
             title: Some("Add greeting, fix off-by-one".into()),
             last_prompt: Some("thanks".into()),
@@ -520,6 +529,7 @@ mod tests {
 
         let mut state = sample_state();
         state.session = Some(SessionSummary {
+            provider: Provider::Claude,
             id: "11111111-aaaa".into(),
             title: Some("Add greeting, fix off-by-one".into()),
             last_prompt: Some("thanks".into()),

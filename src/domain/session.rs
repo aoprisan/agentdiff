@@ -11,7 +11,28 @@ use crate::domain::Timestamp;
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct SessionId(pub String);
 
-/// The nth autonomous (`auto`/`acceptEdits`) span within a session.
+/// Which coding agent produced a session. Selects where session data is read
+/// from and how it's parsed; everything downstream of `SessionContext` is
+/// identical across providers.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Provider {
+    #[default]
+    Claude,
+    Copilot,
+}
+
+impl Provider {
+    /// Human label for the UI / diff-base summary.
+    pub fn label(self) -> &'static str {
+        match self {
+            Provider::Claude => "Claude Code",
+            Provider::Copilot => "Copilot",
+        }
+    }
+}
+
+/// The nth autonomous span within a session (`auto`/`acceptEdits` for Claude,
+/// `autopilot` for Copilot).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub struct RunId(pub u32);
 
@@ -21,6 +42,10 @@ pub enum PermissionMode {
     Plan,
     Default,
     AcceptEdits,
+    /// Copilot's autonomous mode (the analog of Claude's `Auto`).
+    Autopilot,
+    /// Copilot's interactive mode (asks before each action).
+    Interactive,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -126,6 +151,7 @@ pub struct AgentRun {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct AgentSession {
     pub id: SessionId,
+    pub provider: Provider,
     pub project_slug: String,
     pub file: PathBuf,
     pub runs: Vec<AgentRun>,

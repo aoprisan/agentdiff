@@ -70,10 +70,16 @@ fn header(state: &AppState) -> Vec<Line<'static>> {
         Style::default().add_modifier(Modifier::BOLD),
     ));
 
-    let mut base = vec![Span::styled(
-        session.base_label.clone(),
-        Style::default().fg(theme::hunk_header_fg()),
-    )];
+    let mut base = vec![
+        Span::styled(
+            format!("{}  ", session.provider.label()),
+            Style::default().fg(theme::fg()).add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            session.base_label.clone(),
+            Style::default().fg(theme::hunk_header_fg()),
+        ),
+    ];
     if session.live {
         base.push(Span::raw("  "));
         base.push(Span::styled(

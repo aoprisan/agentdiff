@@ -9,16 +9,18 @@ use anyhow::Context;
 
 use crate::config;
 use crate::domain::diff::{Diff, DiffBase};
-use crate::domain::session::PermissionMode;
+use crate::domain::session::{PermissionMode, Provider};
 use crate::git::{self, Repo};
 use crate::session::intent::IntentMap;
-use crate::session::{self, SessionContext, locate};
+use crate::session::{self, AgentDirs, SessionContext, copilot, locate};
 
 use super::state::{AppState, SessionListItem, SessionSummary};
 
 /// What the user asked for, owned so it can be cloned to the worker thread.
 #[derive(Debug, Clone, Default)]
 pub struct Selectors {
+    /// Which agent's session data to read (default: Claude Code).
+    pub provider: Provider,
     pub no_session: bool,
     pub session_id: Option<String>,
     pub run_index: Option<u32>,
@@ -39,7 +41,7 @@ pub struct DiffBundle {
 /// terminal I/O, so it is safe to run on the worker thread.
 pub fn build_bundle(
     repo: &Repo,
-    claude_dir: Option<&Path>,
+    dirs: &AgentDirs,
     selectors: &Selectors,
 ) -> anyhow::Result<DiffBundle> {
     if let Some((from, to)) = &selectors.range {
@@ -55,12 +57,9 @@ pub fn build_bundle(
         return Ok(DiffBundle::git_only(worktree(repo)?));
     }
 
-    let Some(claude) = claude_dir else {
-        return Ok(DiffBundle::git_only(worktree(repo)?));
-    };
-
-    match session::load_session(
-        claude,
+    match session::load(
+        selectors.provider,
+        dirs,
         repo.workdir(),
         selectors.session_id.as_deref(),
         selectors.run_index,
@@ -68,7 +67,8 @@ pub fn build_bundle(
         Some(ctx) => {
             let diff = build_diff_for(repo, &ctx)?;
             let session = Some(summarize(&ctx, &diff.base));
-            let sessions = session_items(claude, repo.workdir(), Some(&ctx.session.id.0));
+            let sessions =
+                session_items(selectors.provider, dirs, repo.workdir(), Some(&ctx.session.id.0));
             Ok(DiffBundle {
                 diff,
                 intent: ctx.intent,
@@ -80,7 +80,7 @@ pub fn build_bundle(
             diff: worktree(repo)?,
             intent: IntentMap::new(),
             session: None,
-            sessions: session_items(claude, repo.workdir(), None),
+            sessions: session_items(selectors.provider, dirs, repo.workdir(), None),
         }),
     }
 }
@@ -89,10 +89,10 @@ pub fn build_bundle(
 pub fn build_state(
     repo: &Repo,
     state_dir: &Path,
-    claude_dir: Option<&Path>,
+    dirs: &AgentDirs,
     selectors: &Selectors,
 ) -> anyhow::Result<AppState> {
-    let bundle = build_bundle(repo, claude_dir, selectors)?;
+    let bundle = build_bundle(repo, dirs, selectors)?;
     tracing::info!(
         files = bundle.diff.files.len(),
         intent_files = bundle.intent.len(),
@@ -151,6 +151,7 @@ fn summarize(ctx: &SessionContext, base: &DiffBase) -> SessionSummary {
         DiffBase::Range { from, to } => format!("{from}..{to}"),
     };
     SessionSummary {
+        provider: ctx.session.provider,
         id: ctx.session.id.0.clone(),
         title: ctx.session.title.clone(),
         last_prompt: ctx.session.last_prompt.clone(),
@@ -171,20 +172,49 @@ fn mode_label(mode: PermissionMode) -> &'static str {
         PermissionMode::AcceptEdits => "acceptEdits",
         PermissionMode::Plan => "plan",
         PermissionMode::Default => "default",
+        PermissionMode::Autopilot => "autopilot",
+        PermissionMode::Interactive => "interactive",
     }
 }
 
-fn session_items(claude: &Path, cwd: &Path, current_id: Option<&str>) -> Vec<SessionListItem> {
-    locate::list_sessions(claude, cwd)
-        .into_iter()
-        .map(|entry| {
-            let label = locate::peek_label(&entry.path);
-            SessionListItem {
-                is_current: current_id == Some(entry.id.0.as_str()),
-                id: entry.id.0,
-                title: label.title,
-                last_prompt: label.last_prompt,
-            }
-        })
-        .collect()
+/// The active provider's sessions for `cwd`, for the picker.
+fn session_items(
+    provider: Provider,
+    dirs: &AgentDirs,
+    cwd: &Path,
+    current_id: Option<&str>,
+) -> Vec<SessionListItem> {
+    match provider {
+        Provider::Claude => {
+            let Some(dir) = dirs.claude.as_deref() else {
+                return Vec::new();
+            };
+            locate::list_sessions(dir, cwd)
+                .into_iter()
+                .map(|entry| {
+                    let label = locate::peek_label(&entry.path);
+                    SessionListItem {
+                        is_current: current_id == Some(entry.id.0.as_str()),
+                        id: entry.id.0,
+                        title: label.title,
+                        last_prompt: label.last_prompt,
+                    }
+                })
+                .collect()
+        }
+        Provider::Copilot => {
+            let Some(dir) = dirs.copilot.as_deref() else {
+                return Vec::new();
+            };
+            copilot::list_sessions(dir, cwd)
+                .into_iter()
+                .map(|entry| SessionListItem {
+                    is_current: current_id == Some(entry.id.0.as_str()),
+                    title: copilot::peek_title(&entry.events),
+                    id: entry.id.0,
+                    last_prompt: None,
+                })
+                .collect()
+        }
+    }
 }
