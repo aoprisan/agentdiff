@@ -126,6 +126,8 @@ pub fn load_session(
             started: raw.started.unwrap_or(Timestamp(0)),
             ended: raw.ended,
             snapshot: backups::resolve(&raw.raw_backups, &file_history_dir, repo_root),
+            // Claude file-history backups are pre-edit; no git base needed.
+            base_commit: None,
             edits: raw.edits.clone(),
             commands: raw.commands.clone(),
         })
@@ -192,6 +194,7 @@ mod tests {
                 started: raw.started.unwrap_or(Timestamp(0)),
                 ended: raw.ended,
                 snapshot: backups::resolve(&raw.raw_backups, file_history, repo),
+                base_commit: None,
                 edits: raw.edits.clone(),
                 commands: raw.commands.clone(),
             })

@@ -126,6 +126,7 @@ pub fn load_session(
 
     let seg = runs::segment(&events);
     let index = snapshots::parse(&entry.dir);
+    let base_commit = index.base_commit().map(str::to_string);
 
     let runs: Vec<AgentRun> = seg
         .runs
@@ -136,7 +137,8 @@ pub fn load_session(
             mode: raw.mode,
             started: raw.started.unwrap_or(Timestamp(0)),
             ended: raw.ended,
-            snapshot: snapshots::resolve(&index, &entry.dir, repo_root),
+            snapshot: snapshots::resolve(&index, repo_root),
+            base_commit: base_commit.clone(),
             edits: raw.edits.clone(),
             commands: raw.commands.clone(),
         })

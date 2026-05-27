@@ -143,6 +143,12 @@ pub struct AgentRun {
     pub ended: Option<Timestamp>,
     /// Path -> pre-run backup, folded from the run's `file-history-snapshot`s.
     pub snapshot: HashMap<PathBuf, Backup>,
+    /// The git commit the run started from, when known. The differ sources a
+    /// file's pre-run content from this commit's blob whenever the snapshot has
+    /// no usable file backup — needed for Copilot, whose rewind snapshots
+    /// capture *post*-edit content, so git is the only reliable "before". `None`
+    /// for Claude, whose file-history backups already hold the pre-edit content.
+    pub base_commit: Option<String>,
     pub edits: Vec<ToolEditEvent>,
     /// Shell commands the agent ran during the span, in transcript order.
     pub commands: Vec<CommandRun>,

@@ -52,4 +52,15 @@ impl Repo {
             Err(e) => Err(e.into()),
         }
     }
+
+    /// The verbatim content of `rel_path` as of `rev` (a commit-ish), lossily
+    /// decoded as UTF-8. `None` when the revision doesn't resolve or the path
+    /// didn't exist there (e.g. an agent-created file) — the differ treats that
+    /// as an empty pre-run side. Used to recover a Copilot run's "before".
+    pub fn blob_at(&self, rev: &str, rel_path: &Path) -> Option<String> {
+        let tree = self.inner.revparse_single(rev).ok()?.peel_to_tree().ok()?;
+        let entry = tree.get_path(rel_path).ok()?;
+        let blob = entry.to_object(&self.inner).ok()?.peel_to_blob().ok()?;
+        Some(String::from_utf8_lossy(blob.content()).into_owned())
+    }
 }

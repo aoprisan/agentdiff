@@ -215,10 +215,13 @@ fn build_hunk(patch: &Patch<'_>, h: usize, path: &Path) -> Result<Hunk> {
 }
 
 /// Build a diff for `DiffBase::AgentRun`: each file in the run's pre-run
-/// snapshot, diffed from its backup content to the current working-tree file.
-/// Backups resolve to verbatim pre-edit content; `backup_path: None` marks an
-/// agent-created file (empty → content). A backup we can't read degrades to an
-/// empty pre-side rather than failing the whole diff.
+/// snapshot, diffed from its pre-run content to the current working-tree file.
+/// The pre-run side comes from the file's backup when one exists (Claude's
+/// file-history holds verbatim pre-edit content); otherwise from the run's
+/// `base_commit` blob (Copilot, whose rewind snapshots are post-edit, so git is
+/// the reliable "before"); a file absent from both is an agent-created file
+/// (empty → content). An unreadable backup or missing blob degrades to an empty
+/// pre-side rather than failing the whole diff.
 pub fn diff_agent_run(repo: &Repo, session: &SessionId, run: &AgentRun) -> Result<Diff> {
     let workdir = repo.workdir();
     let mut files = Vec::new();
@@ -226,20 +229,27 @@ pub fn diff_agent_run(repo: &Repo, session: &SessionId, run: &AgentRun) -> Resul
     for (rel_path, backup) in &run.snapshot {
         let pre = match &backup.backup_path {
             Some(path) => read_lossy(path),
-            None => String::new(),
+            None => run
+                .base_commit
+                .as_deref()
+                .and_then(|rev| repo.blob_at(rev, rel_path))
+                .unwrap_or_default(),
         };
         let current_path = workdir.join(rel_path);
         let current = read_lossy(&current_path);
 
         // Nothing to review when the pre-run content already matches the working
-        // tree: the agent backed the file up but its content is unchanged (or a
+        // tree: the agent touched the file but its content is unchanged (or a
         // backup resolved to the current state). The git path drops such files
         // implicitly; do the same here rather than emit an empty "M +0 -0" entry.
         if pre == current {
             continue;
         }
 
-        let is_created = backup.backup_path.is_none();
+        // Created when there's no pre-run content (no backup and no base blob),
+        // not merely when a backup file is absent — a Copilot file with a
+        // `base_commit` blob is a modification, not a creation.
+        let is_created = pre.is_empty();
         let change = if pre.is_empty() {
             ChangeKind::Added
         } else if current.is_empty() {
@@ -672,6 +682,7 @@ mod tests {
             started: Timestamp(0),
             ended: None,
             snapshot,
+            base_commit: None,
             edits: Vec::new(),
             commands: Vec::new(),
         };
@@ -691,6 +702,71 @@ mod tests {
             ".generated_at" => "[ts]",
             ".files[].hunks[].href.fingerprint" => "[fingerprint]",
         });
+    }
+
+    /// Copilot's pre-run content isn't backed up (its rewind snapshots are
+    /// post-edit), so a touched file carries no `backup_path`; the differ must
+    /// recover the "before" from the run's `base_commit` blob — and not collapse
+    /// to an empty diff the way reading a post-edit backup did.
+    #[test]
+    fn agent_run_diff_uses_base_commit_when_no_backup() {
+        use crate::domain::Timestamp;
+        use crate::domain::session::{AgentRun, Backup, PermissionMode, RunId, SessionId};
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+
+        // Commit the pre-edit content, then leave a post-edit working tree plus a
+        // brand-new (uncommitted) file the "agent" created.
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        write(dir.path(), "src/lib.rs", b"fn f(n: usize) {\n    for _ in 0..=n {}\n}\n");
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("src/lib.rs")).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let sig = Signature::now("Test", "test@example.com").unwrap();
+        let base = repo
+            .commit(Some("HEAD"), &sig, &sig, "base", &tree, &[])
+            .unwrap();
+
+        write(dir.path(), "src/lib.rs", b"fn f(n: usize) {\n    for _ in 0..n {}\n}\n");
+        write(dir.path(), "src/greet.rs", b"pub fn greet() {}\n");
+
+        // Both files touched by the run, neither with a backup (Copilot model).
+        let mut snapshot = HashMap::new();
+        for p in ["src/lib.rs", "src/greet.rs"] {
+            snapshot.insert(
+                PathBuf::from(p),
+                Backup {
+                    backup_path: None,
+                    version: 0,
+                },
+            );
+        }
+        let run = AgentRun {
+            id: RunId(0),
+            mode: PermissionMode::Autopilot,
+            started: Timestamp(0),
+            ended: None,
+            snapshot,
+            base_commit: Some(base.to_string()),
+            edits: Vec::new(),
+            commands: Vec::new(),
+        };
+
+        let repo = Repo::discover(dir.path()).unwrap();
+        let diff = diff_agent_run(&repo, &SessionId("sid".into()), &run).unwrap();
+
+        // The modified file diffs against its base-commit blob (not empty).
+        let lib = find(&diff, "src/lib.rs");
+        assert_eq!(lib.change, ChangeKind::Modified);
+        assert!(!lib.hunks.is_empty());
+        assert!(!lib.is_created);
+
+        // The file absent from the base commit is an agent creation.
+        let greet = find(&diff, "src/greet.rs");
+        assert_eq!(greet.change, ChangeKind::Added);
+        assert!(greet.is_created);
     }
 
     #[test]

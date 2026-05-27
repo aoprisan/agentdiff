@@ -18,6 +18,7 @@ expression: agent_runs
         "version": 1
       }
     },
+    "base_commit": null,
     "edits": [
       {
         "file_path": "/repo/src/greet.rs",

@@ -1,14 +1,24 @@
-//! Resolving Copilot's `rewind-snapshots` into a pre-run backup map.
+//! Resolving Copilot's `rewind-snapshots` into the set of files a run touched
+//! and the commit its "before" content lives at.
 //!
 //! `<session>/rewind-snapshots/index.json` records, in chronological order, a
-//! list of snapshots; each captures the verbatim content of the files touched so
-//! far under `backups/<hash>`, and a top-level `filePathMap` maps each file key
-//! to its absolute path. A file's **earliest** snapshot holds its content before
-//! the agent first edited it — so we keep the first backup seen per file (later
-//! snapshots re-capture an already-edited file at its current content). Keys are
-//! relativized to the repo root and anything outside is dropped, mirroring the
-//! Claude [`backups`](super::super::backups) path. Produces the same
-//! `HashMap<PathBuf, Backup>` the differ consumes; no file content is read here.
+//! list of snapshots and a top-level `filePathMap` from each file key to its
+//! absolute path. Unlike Claude's file-history, a Copilot snapshot captures each
+//! touched file's content **at snapshot time** under `backups/<hash>` — i.e. the
+//! *post*-edit state (a snapshot you can rewind *to*), not the pre-edit content.
+//! The earliest snapshot taken at the run's start records the base `gitCommit`
+//! with the touched files still clean, so the reliable pre-run content is each
+//! file's blob at that commit, *not* any rewind backup. We therefore resolve the
+//! run to: the set of in-repo files it touched (from `filePathMap`) plus the
+//! base commit (from the earliest snapshot's `gitCommit`), and let the differ
+//! read the "before" from git. Keys are relativized to the repo root and
+//! out-of-repo entries dropped, mirroring the Claude
+//! [`backups`](super::super::backups) path.
+//!
+//! Limitation: a file the user had *uncommitted* changes to before the run will
+//! diff against its committed blob, so those pre-run edits show up alongside the
+//! agent's — acceptable for an advisory overlay, and the same as the plain
+//! working-tree fallback.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -27,14 +37,17 @@ pub struct Index {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Snapshot {
-    #[serde(default)]
-    pub files: HashMap<String, SnapshotFile>,
+    #[serde(rename = "gitCommit", default)]
+    pub git_commit: Option<String>,
 }
 
-#[derive(Debug, Clone, Deserialize)]
-pub struct SnapshotFile {
-    #[serde(rename = "backupFile", default)]
-    pub backup_file: Option<String>,
+impl Index {
+    /// The commit a run started from: the earliest snapshot that recorded one.
+    /// `None` for an empty/commit-less index, in which case the run has no
+    /// resolvable base and the caller falls back to working-tree-vs-HEAD.
+    pub fn base_commit(&self) -> Option<&str> {
+        self.snapshots.iter().find_map(|s| s.git_commit.as_deref())
+    }
 }
 
 /// Parse `<session_dir>/rewind-snapshots/index.json`. Returns an empty index for
@@ -50,35 +63,22 @@ pub fn parse(session_dir: &Path) -> Index {
     }
 }
 
-/// Fold the index into a repo-relative pre-run map: each file's earliest backup,
-/// resolved to `<session_dir>/rewind-snapshots/backups/<hash>`.
-pub fn resolve(index: &Index, session_dir: &Path, repo_root: &Path) -> HashMap<PathBuf, Backup> {
-    let backups_dir = session_dir.join("rewind-snapshots").join("backups");
+/// The repo-relative set of files the run touched, each marked as having no
+/// file backup so the differ sources its pre-run content from the run's
+/// `base_commit` blob. Empty when the index records no base commit (→ the
+/// caller falls back to a plain working-tree diff).
+pub fn resolve(index: &Index, repo_root: &Path) -> HashMap<PathBuf, Backup> {
     let mut out: HashMap<PathBuf, Backup> = HashMap::new();
-    // Track the first version index at which each file key was captured.
-    let mut version: HashMap<&str, u32> = HashMap::new();
-
-    for (snap_index, snapshot) in index.snapshots.iter().enumerate() {
-        for (key, file) in &snapshot.files {
-            let Some(backup_name) = &file.backup_file else {
-                continue; // no backup captured for this file in this snapshot
-            };
-            // Earliest snapshot wins: skip a file already seen.
-            if version.contains_key(key.as_str()) {
-                continue;
-            }
-            let Some(abs) = index.file_path_map.get(key) else {
-                continue; // unknown file key
-            };
-            let Some(rel) = relativize(abs, repo_root) else {
-                continue; // out-of-repo entry → drop
-            };
-            version.insert(key.as_str(), snap_index as u32);
+    if index.base_commit().is_none() {
+        return out;
+    }
+    for abs in index.file_path_map.values() {
+        if let Some(rel) = relativize(abs, repo_root) {
             out.insert(
                 rel,
                 Backup {
-                    backup_path: Some(backups_dir.join(backup_name)),
-                    version: snap_index as u32,
+                    backup_path: None,
+                    version: 0,
                 },
             );
         }
@@ -107,10 +107,8 @@ mod tests {
         let json = r#"{
             "version": 1,
             "snapshots": [
-                {"timestamp":"t0","files":{
-                    "k_a":{"backupFile":"a-v1"}
-                }},
-                {"timestamp":"t1","files":{
+                {"timestamp":"t0","gitCommit":"base000","files":{}},
+                {"timestamp":"t1","gitCommit":"later11","files":{
                     "k_a":{"backupFile":"a-v2"},
                     "k_b":{"backupFile":"b-v1"},
                     "k_out":{"backupFile":"out-v1"}
@@ -126,28 +124,37 @@ mod tests {
     }
 
     #[test]
-    fn keeps_earliest_backup_relativizes_and_drops_out_of_repo() {
-        let repo = Path::new("/repo");
-        let session = Path::new("/copilot/session-state/sid");
-        let resolved = resolve(&index_json(), session, repo);
+    fn base_commit_is_the_earliest_recorded() {
+        assert_eq!(index_json().base_commit(), Some("base000"));
+    }
 
-        // out-of-repo file dropped; two in-repo files kept.
+    #[test]
+    fn touched_in_repo_files_resolve_to_a_git_base() {
+        let repo = Path::new("/repo");
+        let resolved = resolve(&index_json(), repo);
+
+        // out-of-repo file dropped; two in-repo files kept, both git-based
+        // (no backup → differ reads the base_commit blob).
         assert_eq!(resolved.len(), 2);
         assert!(!resolved.keys().any(|p| p.to_string_lossy().contains("outside")));
+        assert_eq!(resolved[Path::new("src/a.rs")].backup_path, None);
+        assert_eq!(resolved[Path::new("src/b.rs")].backup_path, None);
+    }
 
-        // a.rs keeps its v1 backup, not the later re-baselined v2.
-        let a = &resolved[Path::new("src/a.rs")];
-        let expected = session.join("rewind-snapshots").join("backups").join("a-v1");
-        assert_eq!(a.backup_path.as_deref(), Some(expected.as_path()));
-        assert_eq!(a.version, 0);
-
-        // b.rs first appears in the second snapshot.
-        assert_eq!(resolved[Path::new("src/b.rs")].version, 1);
+    #[test]
+    fn no_base_commit_yields_empty_so_caller_falls_back() {
+        let json = r#"{
+            "snapshots": [{"timestamp":"t0","files":{}}],
+            "filePathMap": {"k":"/repo/src/a.rs"}
+        }"#;
+        let index: Index = serde_json::from_str(json).unwrap();
+        assert!(index.base_commit().is_none());
+        assert!(resolve(&index, Path::new("/repo")).is_empty());
     }
 
     #[test]
     fn missing_index_is_empty() {
-        let resolved = resolve(&Index::default(), Path::new("/x"), Path::new("/repo"));
+        let resolved = resolve(&Index::default(), Path::new("/repo"));
         assert!(resolved.is_empty());
     }
 }
