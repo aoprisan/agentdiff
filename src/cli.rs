@@ -1,5 +1,5 @@
-//! Command-line arguments. Phase 0 only acts on `path`; the remaining flags are
-//! parsed and stubbed so the surface is stable for later phases.
+//! Command-line arguments. Resolved into [`crate::app::Selectors`] for both the
+//! TUI and the `--report` path.
 
 use std::path::PathBuf;
 
@@ -63,6 +63,11 @@ pub struct Args {
     /// Ignore agent session data; diff working tree vs HEAD.
     #[arg(long)]
     pub no_session: bool,
+
+    /// Print a markdown review report (verdicts, notes, intent, verification)
+    /// to stdout and exit without starting the TUI.
+    #[arg(long)]
+    pub report: bool,
 
     /// Copy this binary into a `bin` directory on your PATH and exit.
     #[arg(long)]

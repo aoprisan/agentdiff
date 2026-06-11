@@ -5,6 +5,7 @@ pub mod bootstrap;
 mod commands;
 mod event;
 mod keymap;
+pub mod report;
 mod rows;
 pub mod state;
 mod update;

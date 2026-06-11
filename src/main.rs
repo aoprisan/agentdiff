@@ -1,14 +1,11 @@
-//! agentdiff — a TUI git-diff tool for reviewing what an AI agent did.
-//!
-//! Phase 0: a panic-safe ratatui shell over the frozen `domain` contract. No git
-//! or session integration yet — see `~/.claude/plans/agentdiff/` for the roadmap.
+//! agentdiff — a TUI git-diff tool for reviewing what an AI agent did. See
+//! `docs/plan/` for the architecture and phase roadmap.
 
 mod app;
 mod cli;
 mod config;
-// Domain types (and their convenience re-exports) are defined ahead of their
-// first use — the Claude-session producers land in Phase 2 — so silence
-// dead-code/unused-import warnings for the contract module only.
+// A few domain types/fields are still ahead of their consumers (e.g. the
+// phase-4 risk engine), so silence dead-code warnings for the contract module.
 #[allow(dead_code, unused_imports)]
 mod domain;
 mod error;
@@ -42,9 +39,30 @@ fn main() -> anyhow::Result<()> {
     );
     tracing::debug!(?args, "parsed args");
 
+    // `--report` is the non-interactive surface: build the same state the TUI
+    // would and print it as markdown instead of entering the alternate screen.
+    if args.report {
+        return report(&args, &paths.state_dir);
+    }
+
     tui::run(args, paths.state_dir)?;
 
     tracing::info!("agentdiff exiting cleanly");
+    Ok(())
+}
+
+/// Build the review state exactly as the TUI would and print the markdown
+/// report to stdout — verdicts, notes, intent, and verification outcomes.
+fn report(args: &cli::Args, state_dir: &Path) -> anyhow::Result<()> {
+    use std::path::PathBuf;
+
+    let start = args.path.clone().unwrap_or_else(|| PathBuf::from("."));
+    let repo = git::Repo::discover(&start)
+        .with_context(|| format!("opening a git repository at {}", start.display()))?;
+    let dirs = session::AgentDirs::discover();
+    let selectors = app::Selectors::from_args(args);
+    let state = app::build_state(&repo, state_dir, &dirs, &selectors)?;
+    print!("{}", app::report::render_markdown(&state));
     Ok(())
 }
 

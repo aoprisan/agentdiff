@@ -13,6 +13,10 @@ pub enum Command {
     HalfPageUp,
     NextHunk,
     PrevHunk,
+    /// Jump to the next hunk without a verdict, wrapping past the end — the
+    /// "what's left to review" motion.
+    NextUnreviewed,
+    PrevUnreviewed,
     NextFile,
     PrevFile,
     GotoTop,
@@ -34,6 +38,11 @@ pub enum Command {
 
     // Notes (Phase 3).
     EditNote,
+
+    // Search.
+    OpenSearch,
+    NextMatch,
+    PrevMatch,
 
     Noop,
 }

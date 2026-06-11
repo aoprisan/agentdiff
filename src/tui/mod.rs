@@ -52,14 +52,7 @@ pub fn run(args: Args, state_dir: PathBuf) -> anyhow::Result<()> {
         .clone()
         .unwrap_or_else(|| palette.syntax.to_string());
 
-    let selectors = Selectors {
-        provider: args.provider(),
-        no_session: args.no_session,
-        session_id: args.session,
-        run_index: args.run,
-        range: args.range.as_deref().map(parse_range),
-        staged: args.staged,
-    };
+    let selectors = Selectors::from_args(&args);
     let mut state = app::build_state(&repo, &state_dir, &dirs, &selectors)?;
     state.keymap = keymap.clone();
 
@@ -259,18 +252,6 @@ fn switch_session(
     }
 }
 
-/// Parse a `--range` argument into `(from, to)`, defaulting the missing side to
-/// `HEAD` (so `HEAD~3` means `HEAD~3..HEAD`).
-fn parse_range(range: &str) -> (String, String) {
-    match range.split_once("..") {
-        Some((from, to)) => (
-            if from.is_empty() { "HEAD" } else { from }.to_string(),
-            if to.is_empty() { "HEAD" } else { to }.to_string(),
-        ),
-        None => (range.to_string(), "HEAD".to_string()),
-    }
-}
-
 fn save_review(state: &AppState) {
     if state.review_dirty
         && let Err(e) = config::save_review_state(&state.state_path, &state.review)
@@ -296,6 +277,8 @@ fn render(frame: &mut Frame, state: &AppState, highlighter: &mut Highlighter) {
     }
     if state.note_edit.is_some() {
         widgets::notes::render(frame, frame.area(), state);
+    } else if state.search_edit.is_some() {
+        widgets::search::render(frame, frame.area(), state);
     } else if state.show_picker {
         widgets::session_picker::render(frame, frame.area(), state);
     } else if state.show_verify {
@@ -551,6 +534,13 @@ mod tests {
             href,
             buffer: "double-check the off-by-one".into(),
         });
+        insta::assert_snapshot!(render_to_string(&state));
+    }
+
+    #[test]
+    fn renders_search_prompt() {
+        let mut state = sample_state();
+        state.search_edit = Some("let x".into());
         insta::assert_snapshot!(render_to_string(&state));
     }
 

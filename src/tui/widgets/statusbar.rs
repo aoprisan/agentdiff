@@ -51,6 +51,15 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
         ));
     }
 
+    if let Some(query) = &state.search_query {
+        spans.push(Span::raw("  "));
+        spans.push(Span::styled(
+            format!("/{query}"),
+            Style::default().add_modifier(Modifier::BOLD),
+        ));
+        spans.push(" m/M match".dim());
+    }
+
     spans.push(Span::raw("    "));
     for (key, label) in [("a", "approve"), ("x", "flag"), ("n", "note"), ("?", "help"), ("q", "quit")] {
         spans.push(Span::styled(key, Style::default().add_modifier(Modifier::BOLD)));
