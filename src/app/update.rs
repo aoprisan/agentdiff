@@ -39,7 +39,8 @@ pub fn update(state: &mut AppState, event: AppEvent) {
     }
 }
 
-/// Route a keypress into the active note editor.
+/// Route a keypress into the active note editor. `Alt+Enter` inserts a
+/// newline; plain `Enter` saves.
 fn edit_note_key(state: &mut AppState, key: ratatui::crossterm::event::KeyEvent) {
     if key.kind != KeyEventKind::Press {
         return;
@@ -47,8 +48,12 @@ fn edit_note_key(state: &mut AppState, key: ratatui::crossterm::event::KeyEvent)
     let Some(edit) = state.note_edit.as_mut() else {
         return;
     };
+    let alt = key
+        .modifiers
+        .contains(ratatui::crossterm::event::KeyModifiers::ALT);
     match key.code {
         KeyCode::Esc => state.note_edit = None,
+        KeyCode::Enter if alt => edit.buffer.push('\n'),
         KeyCode::Enter => commit_note(state),
         KeyCode::Backspace => {
             edit.buffer.pop();
@@ -84,6 +89,7 @@ fn apply(state: &mut AppState, command: Command) {
             state.show_help = false;
             state.show_verify = false;
             state.search_query = None;
+            state.search_matches = 0;
         }
 
         Command::OpenSessionPicker => open_picker(state),
@@ -242,11 +248,13 @@ fn commit_search(state: &mut AppState) {
     let query = buffer.trim().to_string();
     if query.is_empty() {
         state.search_query = None;
+        state.recount_matches();
         return;
     }
     let needle = query.to_lowercase();
     state.search_query = Some(query);
-    if !row_matches(state, state.cursor, &needle) {
+    state.recount_matches();
+    if !state.row_matches(state.cursor, &needle) {
         jump_match(state, true);
     }
 }
@@ -269,29 +277,10 @@ fn jump_match(state: &mut AppState, forward: bool) {
                 (state.cursor + n - step) % n
             }
         })
-        .find(|&idx| row_matches(state, idx, &needle));
+        .find(|&idx| state.row_matches(idx, &needle));
     if let Some(idx) = target {
         move_cursor(state, idx);
     }
-}
-
-/// Case-insensitive match of a flattened row against a lowercased needle: file
-/// path for headers/summaries, hunk header text, or the line's own text.
-fn row_matches(state: &AppState, idx: usize, needle: &str) -> bool {
-    let Some(row) = state.flat.get(idx) else {
-        return false;
-    };
-    let Some(file) = state.diff.files.get(row.file()) else {
-        return false;
-    };
-    let hay = match row {
-        rows::Row::FileHeader { .. } | rows::Row::CollapsedSummary { .. } => {
-            file.path.display().to_string()
-        }
-        rows::Row::HunkHeader { hunk, .. } => file.hunks[hunk].header.clone(),
-        rows::Row::Line { hunk, line, .. } => file.hunks[hunk].lines[line].text.clone(),
-    };
-    hay.to_lowercase().contains(needle)
 }
 
 fn move_cursor(state: &mut AppState, to: usize) {
@@ -535,6 +524,52 @@ mod tests {
         state.diff.files[0].change = ChangeKind::Deleted;
         apply(&mut state, Command::OpenEditor);
         assert_eq!(state.pending_edit, None);
+    }
+
+    #[test]
+    fn alt_enter_builds_a_multiline_note() {
+        let mut state = three_hunk_state();
+        state.cursor = 1; // first hunk header
+        apply(&mut state, Command::EditNote);
+
+        for c in "first".chars() {
+            press(&mut state, KeyCode::Char(c));
+        }
+        update(
+            &mut state,
+            AppEvent::Input(Event::Key(KeyEvent::new(
+                KeyCode::Enter,
+                KeyModifiers::ALT,
+            ))),
+        );
+        for c in "second".chars() {
+            press(&mut state, KeyCode::Char(c));
+        }
+        press(&mut state, KeyCode::Enter);
+
+        let href = state.diff.files[0].hunks[0].href.clone();
+        assert_eq!(state.review.notes.get(&href).map(String::as_str), Some("first\nsecond"));
+        assert!(state.note_edit.is_none());
+    }
+
+    #[test]
+    fn match_count_tracks_commits_and_row_rebuilds() {
+        let mut state = three_hunk_state();
+        press(&mut state, KeyCode::Char('/'));
+        for c in "@@".chars() {
+            press(&mut state, KeyCode::Char(c));
+        }
+        press(&mut state, KeyCode::Enter);
+        assert_eq!(state.search_matches, 3); // one header per hunk
+
+        // Collapsing the file removes the hunk rows; the count follows.
+        apply(&mut state, Command::GotoTop);
+        apply(&mut state, Command::ToggleCollapse);
+        assert_eq!(state.search_matches, 0);
+
+        press(&mut state, KeyCode::Esc);
+        assert_eq!(state.search_matches, 0);
+        assert_eq!(state.search_query, None);
     }
 
     #[test]

@@ -115,7 +115,7 @@ It needs a real terminal (TTY). `agentdiff --help` prints the full CLI surface.
 | `x` | Flag hunk (needs attention) |
 | `u` | Clear verdict |
 | `e` | Open the file in `$VISUAL`/`$EDITOR` at the hunk's line |
-| `n` | Add / edit note |
+| `n` | Add / edit note (`Alt-Enter` for a new line) |
 | `s` | Session picker |
 | `i` | Toggle intent detail |
 | `v` | Verification overlay (commands the agent ran + outcomes) |

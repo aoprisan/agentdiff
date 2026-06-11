@@ -40,7 +40,7 @@ fn note_section(state: &AppState) -> Vec<Line<'static>> {
     let Some(note) = state.review.notes.get(&href) else {
         return Vec::new();
     };
-    vec![
+    let mut lines = vec![
         Line::from(""),
         Line::styled(
             "NOTE",
@@ -48,8 +48,9 @@ fn note_section(state: &AppState) -> Vec<Line<'static>> {
                 .fg(theme::needs_attention_fg())
                 .add_modifier(Modifier::BOLD),
         ),
-        Line::raw(note.clone()),
-    ]
+    ];
+    lines.extend(note.lines().map(|l| Line::raw(l.to_string())));
+    lines
 }
 
 fn header(state: &AppState) -> Vec<Line<'static>> {

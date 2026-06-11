@@ -129,6 +129,9 @@ pub struct AppState {
     pub search_edit: Option<String>,
     /// Committed search query; `m`/`M` jump between matching rows.
     pub search_query: Option<String>,
+    /// Visible rows matching `search_query`, for the statusbar. Recounted when
+    /// the query commits and whenever the flattened rows are rebuilt.
+    pub search_matches: usize,
     /// Set when the user asks to open the cursor's file in their editor; the
     /// run loop suspends the TUI, launches it, and re-diffs on return.
     pub pending_edit: Option<EditRequest>,
@@ -165,6 +168,7 @@ impl AppState {
             note_edit: None,
             search_edit: None,
             search_query: None,
+            search_matches: 0,
             pending_edit: None,
             keymap: Keymap::default(),
         }
@@ -237,7 +241,39 @@ impl AppState {
         if self.cursor > self.flat.last_index() {
             self.cursor = self.flat.last_index();
         }
+        self.recount_matches();
         self.ensure_cursor_visible();
+    }
+
+    /// Case-insensitive match of a flattened row against a lowercased needle:
+    /// file path for headers/summaries, hunk header text, or the line's text.
+    pub fn row_matches(&self, idx: usize, needle: &str) -> bool {
+        let Some(row) = self.flat.get(idx) else {
+            return false;
+        };
+        let Some(file) = self.diff.files.get(row.file()) else {
+            return false;
+        };
+        let hay = match row {
+            Row::FileHeader { .. } | Row::CollapsedSummary { .. } => {
+                file.path.display().to_string()
+            }
+            Row::HunkHeader { hunk, .. } => file.hunks[hunk].header.clone(),
+            Row::Line { hunk, line, .. } => file.hunks[hunk].lines[line].text.clone(),
+        };
+        hay.to_lowercase().contains(needle)
+    }
+
+    /// Refresh `search_matches` for the current query over the visible rows.
+    pub fn recount_matches(&mut self) {
+        let Some(query) = &self.search_query else {
+            self.search_matches = 0;
+            return;
+        };
+        let needle = query.to_lowercase();
+        self.search_matches = (0..self.flat.len())
+            .filter(|&i| self.row_matches(i, &needle))
+            .count();
     }
 
     /// Keep the cursor within the visible window, then clamp the scroll so we

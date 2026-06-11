@@ -586,6 +586,16 @@ mod tests {
     }
 
     #[test]
+    fn renders_flag_badge_and_match_count() {
+        let mut state = sample_state();
+        let href = state.diff.files[0].hunks[0].href.clone();
+        state.review.set_verdict(href, HunkVerdict::NeedsAttention);
+        state.search_query = Some("let".into());
+        state.recount_matches();
+        insta::assert_snapshot!(render_to_string(&state));
+    }
+
+    #[test]
     fn renders_search_prompt() {
         let mut state = sample_state();
         state.search_edit = Some("let x".into());
