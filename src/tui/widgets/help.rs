@@ -14,6 +14,7 @@ pub fn render(frame: &mut Frame, area: Rect) {
         Line::from("  j / k        line down / up"),
         Line::from("  C-d / C-u    half page down / up"),
         Line::from("  ]c / [c      next / prev hunk"),
+        Line::from("  Tab / S-Tab  next / prev unreviewed hunk"),
         Line::from("  } / {        next / prev file"),
         Line::from("  gg / G       top / bottom"),
         Line::from("  Space        collapse / expand file"),

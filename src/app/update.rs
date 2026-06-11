@@ -104,6 +104,8 @@ fn apply(state: &mut AppState, command: Command) {
                 move_cursor(state, r);
             }
         }
+        Command::NextUnreviewed => jump_unreviewed(state, true),
+        Command::PrevUnreviewed => jump_unreviewed(state, false),
         Command::NextFile => {
             if let Some(r) = state.flat.next_file(state.cursor) {
                 move_cursor(state, r);
@@ -135,6 +137,41 @@ fn open_note_editor(state: &mut AppState) {
     };
     let buffer = state.review.notes.get(&href).cloned().unwrap_or_default();
     state.note_edit = Some(NoteEdit { href, buffer });
+}
+
+/// Move to the nearest hunk header without a verdict, wrapping past the ends so
+/// the motion always finds whatever is left to review. Hunks inside collapsed
+/// files have no header row and are skipped, like the other motions.
+fn jump_unreviewed(state: &mut AppState, forward: bool) {
+    let unreviewed = |r: &usize| -> bool {
+        state
+            .flat
+            .get(*r)
+            .and_then(|row| row.hunk())
+            .and_then(|(fi, hi)| state.diff.files.get(fi)?.hunks.get(hi))
+            .is_some_and(|h| state.review.verdict(&h.href) == HunkVerdict::Unreviewed)
+    };
+    let rows = state.flat.hunk_rows();
+    let cursor = state.cursor;
+    let target = if forward {
+        let (before, after): (Vec<usize>, Vec<usize>) = rows.iter().partition(|&&r| r <= cursor);
+        after
+            .iter()
+            .find(|r| unreviewed(r))
+            .or_else(|| before.iter().find(|r| unreviewed(r)))
+            .copied()
+    } else {
+        let (before, after): (Vec<usize>, Vec<usize>) = rows.iter().partition(|&&r| r < cursor);
+        before
+            .iter()
+            .rev()
+            .find(|r| unreviewed(r))
+            .or_else(|| after.iter().rev().find(|r| unreviewed(r)))
+            .copied()
+    };
+    if let Some(r) = target {
+        move_cursor(state, r);
+    }
 }
 
 fn move_cursor(state: &mut AppState, to: usize) {
@@ -212,5 +249,103 @@ fn apply_picker(state: &mut AppState, command: Command) {
             state.show_picker = false;
         }
         _ => {}
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::Timestamp;
+    use crate::domain::diff::{
+        ChangeKind, Diff, DiffBase, FileChange, FileId, Hunk, Line, LineKind, LineRange,
+    };
+    use crate::domain::review::{HunkRef, ReviewState};
+    use std::path::PathBuf;
+
+    fn hunk(fp: u64) -> Hunk {
+        Hunk {
+            href: HunkRef {
+                path: PathBuf::from("a.rs"),
+                fingerprint: fp,
+            },
+            old: LineRange { start: 0, count: 0 },
+            new: LineRange { start: 1, count: 1 },
+            header: format!("@@ {fp} @@"),
+            lines: vec![Line {
+                kind: LineKind::Added,
+                old_no: None,
+                new_no: Some(1),
+                text: "x".into(),
+                intra: Vec::new(),
+            }],
+        }
+    }
+
+    /// One file with three hunks: rows are FileHeader, then (HunkHeader, Line)
+    /// per hunk — hunk headers sit at rows 1, 3, and 5.
+    fn three_hunk_state() -> AppState {
+        let diff = Diff {
+            base: DiffBase::WorkingTreeVsHead,
+            generated_at: Timestamp::from_millis(0),
+            files: vec![FileChange {
+                id: FileId(0),
+                path: PathBuf::from("a.rs"),
+                old_path: None,
+                change: ChangeKind::Modified,
+                is_binary: false,
+                is_created: false,
+                language: None,
+                hunks: vec![hunk(1), hunk(2), hunk(3)],
+                stats: (3, 0),
+            }],
+        };
+        let mut state = AppState::new(diff, ReviewState::default(), PathBuf::from("/tmp/r.toml"));
+        state.viewport_height = 100;
+        state
+    }
+
+    #[test]
+    fn next_unreviewed_skips_verdicted_hunks() {
+        let mut state = three_hunk_state();
+        let second = state.diff.files[0].hunks[1].href.clone();
+        state.review.set_verdict(second, HunkVerdict::Approved);
+
+        apply(&mut state, Command::NextUnreviewed);
+        assert_eq!(state.cursor, 1); // first hunk header
+        apply(&mut state, Command::NextUnreviewed);
+        assert_eq!(state.cursor, 5); // third — the approved second is skipped
+    }
+
+    #[test]
+    fn next_unreviewed_wraps_past_the_end() {
+        let mut state = three_hunk_state();
+        apply(&mut state, Command::GotoBottom);
+        apply(&mut state, Command::NextUnreviewed);
+        assert_eq!(state.cursor, 1);
+    }
+
+    #[test]
+    fn prev_unreviewed_walks_backwards_and_wraps() {
+        let mut state = three_hunk_state();
+        apply(&mut state, Command::PrevUnreviewed);
+        assert_eq!(state.cursor, 5); // wraps from the top to the last hunk
+        apply(&mut state, Command::PrevUnreviewed);
+        assert_eq!(state.cursor, 3);
+    }
+
+    #[test]
+    fn next_unreviewed_stays_put_when_everything_is_reviewed() {
+        let mut state = three_hunk_state();
+        let hrefs: Vec<_> = state.diff.files[0]
+            .hunks
+            .iter()
+            .map(|h| h.href.clone())
+            .collect();
+        for href in hrefs {
+            state.review.set_verdict(href, HunkVerdict::Approved);
+        }
+        state.cursor = 3;
+        apply(&mut state, Command::NextUnreviewed);
+        assert_eq!(state.cursor, 3);
     }
 }

@@ -99,6 +99,7 @@ It needs a real terminal (TTY). `agentdiff --help` prints the full CLI surface.
 | `j` / `k`, `↓` / `↑` | Line down / up |
 | `Ctrl-d` / `Ctrl-u` | Half page down / up |
 | `]c` / `[c` | Next / previous hunk |
+| `Tab` / `Shift-Tab` | Next / previous **unreviewed** hunk (wraps) |
 | `}` / `{` | Next / previous file |
 | `gg` / `G` | Top / bottom |
 | `Space` | Collapse / expand file |

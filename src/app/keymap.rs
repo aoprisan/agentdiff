@@ -72,6 +72,8 @@ impl Keymap {
             KeyCode::Char('u') if ctrl => Command::HalfPageUp,
             KeyCode::Char('}') => Command::NextFile,
             KeyCode::Char('{') => Command::PrevFile,
+            KeyCode::Tab => Command::NextUnreviewed,
+            KeyCode::BackTab => Command::PrevUnreviewed,
             KeyCode::Char('G') => Command::GotoBottom,
 
             KeyCode::Char(' ') => Command::ToggleCollapse,

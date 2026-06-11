@@ -103,6 +103,11 @@ impl FlatDiff {
         self.file_header_rows.get(file).copied()
     }
 
+    /// Ordered row indices of every hunk header, for verdict-aware jumps.
+    pub fn hunk_rows(&self) -> &[usize] {
+        &self.hunk_header_rows
+    }
+
     pub fn next_hunk(&self, cursor: usize) -> Option<usize> {
         self.hunk_header_rows.iter().copied().find(|&r| r > cursor)
     }
