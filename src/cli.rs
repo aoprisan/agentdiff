@@ -26,6 +26,16 @@ impl From<ProviderArg> for Provider {
     }
 }
 
+/// Output format for `--report`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, ValueEnum)]
+pub enum ReportFormat {
+    /// Human-readable markdown, ready to paste back to the agent.
+    #[default]
+    Markdown,
+    /// Stable structured output for piping into tools/agents.
+    Json,
+}
+
 #[derive(Debug, Parser)]
 #[command(
     name = "agentdiff",
@@ -64,10 +74,17 @@ pub struct Args {
     #[arg(long)]
     pub no_session: bool,
 
-    /// Print a markdown review report (verdicts, notes, intent, verification)
-    /// to stdout and exit without starting the TUI.
-    #[arg(long)]
-    pub report: bool,
+    /// Print a review report (verdicts, notes, intent, verification) to stdout
+    /// and exit without starting the TUI. `--report` alone emits markdown;
+    /// `--report=json` emits structured JSON.
+    #[arg(
+        long,
+        value_enum,
+        num_args = 0..=1,
+        require_equals = true,
+        default_missing_value = "markdown"
+    )]
+    pub report: Option<ReportFormat>,
 
     /// Copy this binary into a `bin` directory on your PATH and exit.
     #[arg(long)]
@@ -82,5 +99,27 @@ impl Args {
         } else {
             self.provider.into()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn report_flag_defaults_to_markdown_and_accepts_json() {
+        let args = Args::try_parse_from(["agentdiff", "--report"]).unwrap();
+        assert_eq!(args.report, Some(ReportFormat::Markdown));
+
+        let args = Args::try_parse_from(["agentdiff", "--report=json"]).unwrap();
+        assert_eq!(args.report, Some(ReportFormat::Json));
+
+        // `require_equals` keeps a following path positional, not a format.
+        let args = Args::try_parse_from(["agentdiff", "--report", "/repo"]).unwrap();
+        assert_eq!(args.report, Some(ReportFormat::Markdown));
+        assert_eq!(args.path.as_deref(), Some(std::path::Path::new("/repo")));
+
+        let args = Args::try_parse_from(["agentdiff"]).unwrap();
+        assert_eq!(args.report, None);
     }
 }

@@ -34,10 +34,11 @@ other commit: flat, intent-free, and not scoped to "what this one run touched."
 - **Read-only triage.** Mark hunks approved or needs-attention and attach notes;
   state persists across runs and re-attaches to changes by content fingerprint,
   not line number, so it survives a live re-diff.
-- **Close the loop.** `agentdiff --report` prints the review as markdown —
-  flagged hunks with their diffs, your notes, the correlated intent, and the
-  verification outcomes — ready to pipe back to the agent as a follow-up task.
-  For small fixes, `e` suspends the TUI and opens the file in your
+- **Close the loop.** `agentdiff --report` prints the review — flagged hunks
+  with their diffs, your notes, the correlated intent, the verification
+  outcomes, and a checklist of what's still unreviewed — as markdown ready to
+  paste back to the agent, or as stable JSON (`--report=json`) for piping into
+  tools. For small fixes, `e` suspends the TUI and opens the file in your
   `$VISUAL`/`$EDITOR` at the hunk's line; the diff refreshes when you return.
 - **Fast, large-diff rendering.** Virtualized diff pane and lazy, viewport-only
   syntax highlighting — it stays responsive on generated files.
@@ -94,6 +95,7 @@ It needs a real terminal (TTY). `agentdiff --help` prints the full CLI surface.
 | `--staged` | Diff staged changes (index vs `HEAD`) instead of the working tree. |
 | `--no-session` | Ignore Claude Code session data; diff working tree vs `HEAD`. |
 | `--report` | Print the review as markdown to stdout and exit (no TUI). |
+| `--report=json` | Same report as stable JSON, for piping into tools/agents. |
 | `--install` | Copy this binary onto your `PATH` and exit. |
 
 ## Keys

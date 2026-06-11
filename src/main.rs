@@ -40,9 +40,9 @@ fn main() -> anyhow::Result<()> {
     tracing::debug!(?args, "parsed args");
 
     // `--report` is the non-interactive surface: build the same state the TUI
-    // would and print it as markdown instead of entering the alternate screen.
-    if args.report {
-        return report(&args, &paths.state_dir);
+    // would and print it instead of entering the alternate screen.
+    if let Some(format) = args.report {
+        return report(&args, &paths.state_dir, format);
     }
 
     tui::run(args, paths.state_dir)?;
@@ -51,9 +51,9 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Build the review state exactly as the TUI would and print the markdown
-/// report to stdout — verdicts, notes, intent, and verification outcomes.
-fn report(args: &cli::Args, state_dir: &Path) -> anyhow::Result<()> {
+/// Build the review state exactly as the TUI would and print the report to
+/// stdout — verdicts, notes, intent, and verification outcomes.
+fn report(args: &cli::Args, state_dir: &Path, format: cli::ReportFormat) -> anyhow::Result<()> {
     use std::path::PathBuf;
 
     let start = args.path.clone().unwrap_or_else(|| PathBuf::from("."));
@@ -62,7 +62,11 @@ fn report(args: &cli::Args, state_dir: &Path) -> anyhow::Result<()> {
     let dirs = session::AgentDirs::discover();
     let selectors = app::Selectors::from_args(args);
     let state = app::build_state(&repo, state_dir, &dirs, &selectors)?;
-    print!("{}", app::report::render_markdown(&state));
+    let output = match format {
+        cli::ReportFormat::Markdown => app::report::render_markdown(&state),
+        cli::ReportFormat::Json => app::report::render_json(&state),
+    };
+    print!("{output}");
     Ok(())
 }
 
