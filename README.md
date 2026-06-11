@@ -20,9 +20,11 @@ other commit: flat, intent-free, and not scoped to "what this one run touched."
   run's *pre-run* file content (Claude Code's file-history backups), so you see
   exactly what the run changed — even across intermediate commits. Falls back to
   working-tree-vs-`HEAD` when no session is found.
-- **Agent-intent correlation.** For each changed file it surfaces the agent's
-  own reasoning, recovered by walking the transcript back to the assistant turn
-  that drove the edit.
+- **Agent-intent correlation.** It surfaces the agent's own reasoning next to
+  each change, recovered by walking the transcript back to the assistant turn
+  that drove the edit — and matched **per hunk** by edit content, so a file the
+  agent touched several times for different reasons shows each hunk its own
+  "why" (falling back to the file's most recent intent when nothing matches).
 - **Verification surfacing — "did it actually work?"** Alongside what the agent
   *said*, it shows what the agent *ran to check itself*: the test/build/lint
   commands in the run and whether they passed (a compact `✓ test · ✗ lint` badge,

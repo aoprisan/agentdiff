@@ -11,7 +11,7 @@ use crate::config;
 use crate::domain::diff::{Diff, DiffBase};
 use crate::domain::session::{PermissionMode, Provider};
 use crate::git::{self, Repo};
-use crate::session::intent::IntentMap;
+use crate::session::intent::{self as intent_mod, HunkIntentMap, IntentMap};
 use crate::session::{self, AgentDirs, SessionContext, copilot, locate};
 
 use super::state::{AppState, SessionListItem, SessionSummary};
@@ -59,6 +59,8 @@ fn parse_range(range: &str) -> (String, String) {
 pub struct DiffBundle {
     pub diff: Diff,
     pub intent: IntentMap,
+    /// Hunk-level intent, matched by edit content; falls back to `intent`.
+    pub hunk_intent: HunkIntentMap,
     pub session: Option<SessionSummary>,
     pub sessions: Vec<SessionListItem>,
 }
@@ -95,9 +97,13 @@ pub fn build_bundle(
             let session = Some(summarize(&ctx, &diff.base));
             let sessions =
                 session_items(selectors.provider, dirs, repo.workdir(), Some(&ctx.session.id.0));
+            // Hunk-level correlation needs both the diff and the edits, so it
+            // happens here rather than in `session::load`.
+            let hunk_intent = intent_mod::correlate(&diff, &ctx.edit_intents);
             Ok(DiffBundle {
                 diff,
                 intent: ctx.intent,
+                hunk_intent,
                 session,
                 sessions,
             })
@@ -105,6 +111,7 @@ pub fn build_bundle(
         None => Ok(DiffBundle {
             diff: worktree(repo)?,
             intent: IntentMap::new(),
+            hunk_intent: HunkIntentMap::new(),
             session: None,
             sessions: session_items(selectors.provider, dirs, repo.workdir(), None),
         }),
@@ -132,6 +139,7 @@ pub fn build_state(
 
     let mut state = AppState::new(bundle.diff, review, state_path);
     state.intent = bundle.intent;
+    state.hunk_intent = bundle.hunk_intent;
     state.session = bundle.session;
     state.sessions = bundle.sessions;
     Ok(state)
@@ -142,6 +150,7 @@ impl DiffBundle {
         DiffBundle {
             diff,
             intent: IntentMap::new(),
+            hunk_intent: HunkIntentMap::new(),
             session: None,
             sessions: Vec::new(),
         }

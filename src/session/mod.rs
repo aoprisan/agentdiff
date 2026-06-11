@@ -70,6 +70,10 @@ pub struct SessionContext {
     pub session: AgentSession,
     pub selected_run: Option<RunId>,
     pub intent: IntentMap,
+    /// Per-edit intents with content, in transcript order; correlated against
+    /// the hunks once the diff exists. Empty for providers without edit
+    /// content (Copilot), which then fall back to the per-file map.
+    pub edit_intents: Vec<intent::EditIntent>,
 }
 
 impl SessionContext {
@@ -150,6 +154,7 @@ pub fn load_session(
         session,
         selected_run,
         intent: intent::build(&records, repo_root),
+        edit_intents: intent::edit_intents(&records, repo_root),
     })
 }
 
@@ -276,6 +281,9 @@ mod tests {
         ));
         assert!(ctx.intent.contains_key(&PathBuf::from("src/greet.rs")));
         assert!(ctx.intent.contains_key(&PathBuf::from("src/lib.rs")));
+        // Per-edit intents (with content) survive for hunk correlation; the
+        // out-of-repo edit is dropped.
+        assert_eq!(ctx.edit_intents.len(), 2);
         assert_eq!(ctx.session.title.as_deref(), Some("Add greeting, fix off-by-one"));
 
         // Verification commands survive into the selected run.

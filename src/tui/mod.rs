@@ -155,7 +155,13 @@ fn event_loop(
             Ok(AppEvent::DiffReady { generation, bundle }) => {
                 if generation == state.generation {
                     let bundle = *bundle;
-                    state.apply_rediff(bundle.diff, bundle.intent, bundle.session, bundle.sessions);
+                    state.apply_rediff(
+                        bundle.diff,
+                        bundle.intent,
+                        bundle.hunk_intent,
+                        bundle.session,
+                        bundle.sessions,
+                    );
                     // Indices changed, so cached highlights may be stale.
                     highlighter.clear();
                 }

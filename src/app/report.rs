@@ -134,6 +134,19 @@ fn hunks(out: &mut String, state: &AppState) {
                 HunkVerdict::Unreviewed => "unreviewed",
             };
             let _ = writeln!(out, "#### `{}` — {verdict}\n", hunk.header);
+            // The specific edit's reasoning, when it differs from the
+            // file-level intent already quoted above.
+            if let Some(hunk_intent) = state.hunk_intent.get(&hunk.href)
+                && state
+                    .intent
+                    .get(&file.path)
+                    .is_none_or(|fi| fi.text != hunk_intent.text)
+            {
+                for line in hunk_intent.text.lines() {
+                    let _ = writeln!(out, "> {line}");
+                }
+                out.push('\n');
+            }
             if let Some(note) = state.review.notes.get(&hunk.href) {
                 let _ = writeln!(out, "Note: {note}\n");
             }
