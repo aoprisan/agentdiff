@@ -1,5 +1,5 @@
-//! Command-line arguments. Phase 0 only acts on `path`; the remaining flags are
-//! parsed and stubbed so the surface is stable for later phases.
+//! Command-line arguments. Resolved into [`crate::app::Selectors`] for both the
+//! TUI and the `--report` path.
 
 use std::path::PathBuf;
 
