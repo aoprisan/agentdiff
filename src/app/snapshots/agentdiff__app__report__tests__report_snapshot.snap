@@ -1,0 +1,36 @@
+---
+source: src/app/report.rs
+expression: render_markdown(&sample_state())
+---
+# agentdiff review — agent run 1/1 (auto)
+
+Session: Add greeting, fix off-by-one (`11111111-aaaa`, Claude Code)
+
+**2 hunks** — 1 approved · 1 flagged · 0 unreviewed · 1 with notes
+
+## Verification (commands the agent ran)
+
+- ✓ test — `cargo test --all`
+- ✗ lint — `cargo clippy --all-targets`
+
+Failed lint output (`cargo clippy --all-targets`):
+
+````text
+error: unused variable `x`
+````
+
+## Flagged & noted hunks
+
+### src/main.rs
+
+> Bump the constant so the example reflects the new default.
+
+#### `@@ -1,2 +1,2 @@ fn main()` — flagged
+
+Note: off-by-one suspicion
+
+````diff
+ fn main() {
+-    let x = 1;
++    let x = 2;
+````

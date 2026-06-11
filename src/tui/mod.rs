@@ -52,14 +52,7 @@ pub fn run(args: Args, state_dir: PathBuf) -> anyhow::Result<()> {
         .clone()
         .unwrap_or_else(|| palette.syntax.to_string());
 
-    let selectors = Selectors {
-        provider: args.provider(),
-        no_session: args.no_session,
-        session_id: args.session,
-        run_index: args.run,
-        range: args.range.as_deref().map(parse_range),
-        staged: args.staged,
-    };
+    let selectors = Selectors::from_args(&args);
     let mut state = app::build_state(&repo, &state_dir, &dirs, &selectors)?;
     state.keymap = keymap.clone();
 
@@ -256,18 +249,6 @@ fn switch_session(
     match app::build_state(repo, state_dir, dirs, selectors) {
         Ok(new_state) => *state = new_state,
         Err(e) => tracing::warn!(error = %e, session = session_id, "failed to switch session"),
-    }
-}
-
-/// Parse a `--range` argument into `(from, to)`, defaulting the missing side to
-/// `HEAD` (so `HEAD~3` means `HEAD~3..HEAD`).
-fn parse_range(range: &str) -> (String, String) {
-    match range.split_once("..") {
-        Some((from, to)) => (
-            if from.is_empty() { "HEAD" } else { from }.to_string(),
-            if to.is_empty() { "HEAD" } else { to }.to_string(),
-        ),
-        None => (range.to_string(), "HEAD".to_string()),
     }
 }
 

@@ -32,6 +32,9 @@ other commit: flat, intent-free, and not scoped to "what this one run touched."
 - **Read-only triage.** Mark hunks approved or needs-attention and attach notes;
   state persists across runs and re-attaches to changes by content fingerprint,
   not line number, so it survives a live re-diff.
+- **Close the loop.** `agentdiff --report` prints the review as markdown —
+  flagged hunks with their diffs, your notes, the correlated intent, and the
+  verification outcomes — ready to pipe back to the agent as a follow-up task.
 - **Fast, large-diff rendering.** Virtualized diff pane and lazy, viewport-only
   syntax highlighting — it stays responsive on generated files.
 
@@ -86,6 +89,7 @@ It needs a real terminal (TTY). `agentdiff --help` prints the full CLI surface.
 | `--range <A..B>` | Diff an arbitrary git range. |
 | `--staged` | Diff staged changes (index vs `HEAD`) instead of the working tree. |
 | `--no-session` | Ignore Claude Code session data; diff working tree vs `HEAD`. |
+| `--report` | Print the review as markdown to stdout and exit (no TUI). |
 | `--install` | Copy this binary onto your `PATH` and exit. |
 
 ## Keys

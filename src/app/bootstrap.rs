@@ -28,6 +28,32 @@ pub struct Selectors {
     pub staged: bool,
 }
 
+impl Selectors {
+    /// Resolve CLI args into the owned selectors threaded through re-diffs.
+    pub fn from_args(args: &crate::cli::Args) -> Self {
+        Selectors {
+            provider: args.provider(),
+            no_session: args.no_session,
+            session_id: args.session.clone(),
+            run_index: args.run,
+            range: args.range.as_deref().map(parse_range),
+            staged: args.staged,
+        }
+    }
+}
+
+/// Parse a `--range` argument into `(from, to)`, defaulting the missing side to
+/// `HEAD` (so `HEAD~3` means `HEAD~3..HEAD`).
+fn parse_range(range: &str) -> (String, String) {
+    match range.split_once("..") {
+        Some((from, to)) => (
+            if from.is_empty() { "HEAD" } else { from }.to_string(),
+            if to.is_empty() { "HEAD" } else { to }.to_string(),
+        ),
+        None => (range.to_string(), "HEAD".to_string()),
+    }
+}
+
 /// The diff plus its session overlay — everything a re-diff replaces, leaving
 /// review verdicts/notes (keyed by fingerprint) and cursor state untouched.
 pub struct DiffBundle {

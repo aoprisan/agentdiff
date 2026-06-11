@@ -64,6 +64,11 @@ pub struct Args {
     #[arg(long)]
     pub no_session: bool,
 
+    /// Print a markdown review report (verdicts, notes, intent, verification)
+    /// to stdout and exit without starting the TUI.
+    #[arg(long)]
+    pub report: bool,
+
     /// Copy this binary into a `bin` directory on your PATH and exit.
     #[arg(long)]
     pub install: bool,

@@ -42,9 +42,30 @@ fn main() -> anyhow::Result<()> {
     );
     tracing::debug!(?args, "parsed args");
 
+    // `--report` is the non-interactive surface: build the same state the TUI
+    // would and print it as markdown instead of entering the alternate screen.
+    if args.report {
+        return report(&args, &paths.state_dir);
+    }
+
     tui::run(args, paths.state_dir)?;
 
     tracing::info!("agentdiff exiting cleanly");
+    Ok(())
+}
+
+/// Build the review state exactly as the TUI would and print the markdown
+/// report to stdout — verdicts, notes, intent, and verification outcomes.
+fn report(args: &cli::Args, state_dir: &Path) -> anyhow::Result<()> {
+    use std::path::PathBuf;
+
+    let start = args.path.clone().unwrap_or_else(|| PathBuf::from("."));
+    let repo = git::Repo::discover(&start)
+        .with_context(|| format!("opening a git repository at {}", start.display()))?;
+    let dirs = session::AgentDirs::discover();
+    let selectors = app::Selectors::from_args(args);
+    let state = app::build_state(&repo, state_dir, &dirs, &selectors)?;
+    print!("{}", app::report::render_markdown(&state));
     Ok(())
 }
 
