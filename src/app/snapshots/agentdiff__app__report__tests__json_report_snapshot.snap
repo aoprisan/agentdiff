@@ -1,0 +1,54 @@
+---
+source: src/app/report.rs
+expression: render_json(&sample_state())
+---
+{
+  "base": "agent run 1/1 (auto)",
+  "session": {
+    "id": "11111111-aaaa",
+    "provider": "claude",
+    "title": "Add greeting, fix off-by-one",
+    "live": false
+  },
+  "summary": {
+    "total": 3,
+    "approved": 1,
+    "flagged": 1,
+    "unreviewed": 1,
+    "notes": 1,
+    "changed_since_reviewed": 0
+  },
+  "verification": [
+    {
+      "kind": "test",
+      "command": "cargo test --all",
+      "outcome": "ok",
+      "output_excerpt": "test result: ok."
+    },
+    {
+      "kind": "lint",
+      "command": "cargo clippy --all-targets",
+      "outcome": "failed",
+      "output_excerpt": "error: unused variable `x`"
+    }
+  ],
+  "findings": [
+    {
+      "path": "src/main.rs",
+      "header": "@@ -1,2 +1,2 @@ fn main()",
+      "fingerprint": 1,
+      "verdict": "flagged",
+      "note": "off-by-one suspicion",
+      "intent": "Bump x specifically for the doctest.",
+      "intent_scope": "hunk",
+      "diff": " fn main() {\n-    let x = 1;\n+    let x = 2;\n"
+    }
+  ],
+  "unreviewed": [
+    {
+      "path": "src/main.rs",
+      "header": "@@ -20,2 +20,2 @@",
+      "fingerprint": 3
+    }
+  ]
+}

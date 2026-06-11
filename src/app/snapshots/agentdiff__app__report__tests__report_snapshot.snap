@@ -6,7 +6,7 @@ expression: render_markdown(&sample_state())
 
 Session: Add greeting, fix off-by-one (`11111111-aaaa`, Claude Code)
 
-**2 hunks** — 1 approved · 1 flagged · 0 unreviewed · 1 with notes
+**3 hunks** — 1 approved · 1 flagged · 1 unreviewed · 1 with notes
 
 ## Verification (commands the agent ran)
 
@@ -27,6 +27,8 @@ error: unused variable `x`
 
 #### `@@ -1,2 +1,2 @@ fn main()` — flagged
 
+> Bump x specifically for the doctest.
+
 Note: off-by-one suspicion
 
 ````diff
@@ -34,3 +36,8 @@ Note: off-by-one suspicion
 -    let x = 1;
 +    let x = 2;
 ````
+
+
+## Unreviewed hunks
+
+- [ ] `src/main.rs` — `@@ -20,2 +20,2 @@`

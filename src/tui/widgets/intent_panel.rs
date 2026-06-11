@@ -9,6 +9,7 @@ use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Paragraph, Wrap};
 
 use crate::app::AppState;
+use crate::app::state::IntentScope;
 use crate::tui::theme;
 
 /// Compact-mode cap on intent text before `i` expands it.
@@ -39,7 +40,7 @@ fn note_section(state: &AppState) -> Vec<Line<'static>> {
     let Some(note) = state.review.notes.get(&href) else {
         return Vec::new();
     };
-    vec![
+    let mut lines = vec![
         Line::from(""),
         Line::styled(
             "NOTE",
@@ -47,8 +48,9 @@ fn note_section(state: &AppState) -> Vec<Line<'static>> {
                 .fg(theme::needs_attention_fg())
                 .add_modifier(Modifier::BOLD),
         ),
-        Line::raw(note.clone()),
-    ]
+    ];
+    lines.extend(note.lines().map(|l| Line::raw(l.to_string())));
+    lines
 }
 
 fn header(state: &AppState) -> Vec<Line<'static>> {
@@ -106,7 +108,7 @@ fn body(state: &AppState) -> Vec<Line<'static>> {
         .and_then(|r| state.diff.files.get(r.file()))
         .map(|f| f.path.display().to_string());
 
-    let Some(intent) = state.current_intent() else {
+    let Some((intent, scope)) = state.current_intent() else {
         let mut lines = Vec::new();
         if let Some(path) = file {
             lines.push(Line::styled(path, Style::default().fg(theme::gutter_fg())));
@@ -125,7 +127,7 @@ fn body(state: &AppState) -> Vec<Line<'static>> {
             Style::default().fg(theme::gutter_fg()),
         ));
     }
-    lines.push(why_line(intent.confidence));
+    lines.push(why_line(intent.confidence, scope));
     lines.push(Line::from(""));
 
     let text = &intent.text;
@@ -143,11 +145,16 @@ fn body(state: &AppState) -> Vec<Line<'static>> {
     lines
 }
 
-/// A "WHY" label with a confidence meter.
-fn why_line(confidence: f32) -> Line<'static> {
+/// A "WHY" label with a confidence meter and the anchoring granularity, so the
+/// reviewer knows whether this reasoning drove *this hunk* or just the file.
+fn why_line(confidence: f32, scope: IntentScope) -> Line<'static> {
     let filled = (confidence.clamp(0.0, 1.0) * 5.0).round() as usize;
     let meter: String = "●".repeat(filled) + &"○".repeat(5 - filled);
     let pct = (confidence.clamp(0.0, 1.0) * 100.0).round() as u32;
+    let scope_label = match scope {
+        IntentScope::Hunk => " · this hunk",
+        IntentScope::File => " · whole file",
+    };
     Line::from(vec![
         Span::styled(
             "WHY ",
@@ -157,5 +164,6 @@ fn why_line(confidence: f32) -> Line<'static> {
         ),
         Span::styled(meter, Style::default().fg(theme::intent_fg())),
         Span::styled(format!(" {pct}%"), Style::default().fg(theme::gutter_fg())),
+        Span::styled(scope_label, Style::default().fg(theme::gutter_fg())),
     ])
 }

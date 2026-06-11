@@ -160,6 +160,9 @@ pub fn load_session(
         session,
         selected_run,
         intent: intent::build(&events, repo_root),
+        // Copilot rewind snapshots don't carry per-edit content, so hunk-level
+        // correlation has nothing to match on; per-file intent still applies.
+        edit_intents: Vec::new(),
     })
 }
 

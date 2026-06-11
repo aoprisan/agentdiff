@@ -57,7 +57,13 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
             format!("/{query}"),
             Style::default().add_modifier(Modifier::BOLD),
         ));
-        spans.push(" m/M match".dim());
+        let count = match state.search_matches {
+            0 => " no matches".to_string(),
+            1 => " 1 match".to_string(),
+            n => format!(" {n} matches"),
+        };
+        spans.push(count.dim());
+        spans.push(" m/M".dim());
     }
 
     spans.push(Span::raw("    "));

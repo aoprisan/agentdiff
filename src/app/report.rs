@@ -5,11 +5,44 @@
 
 use std::fmt::Write as _;
 
+use serde::Serialize;
+
 use crate::domain::diff::{DiffBase, FileChange, Hunk, LineKind};
 use crate::domain::review::HunkVerdict;
-use crate::domain::session::{CommandOutcome, CommandRun};
+use crate::domain::session::{CommandOutcome, CommandRun, Provider};
 
 use super::state::AppState;
+
+/// A hunk belongs in the report body when the reviewer flagged it or wrote a
+/// note on it — the actionable subset.
+fn reportable_hunks<'a>(state: &AppState, file: &'a FileChange) -> Vec<&'a Hunk> {
+    file.hunks
+        .iter()
+        .filter(|h| {
+            state.review.verdict(&h.href) == HunkVerdict::NeedsAttention
+                || state.review.notes.contains_key(&h.href)
+        })
+        .collect()
+}
+
+fn verdict_label(verdict: HunkVerdict) -> &'static str {
+    match verdict {
+        HunkVerdict::NeedsAttention => "flagged",
+        HunkVerdict::Approved => "approved",
+        HunkVerdict::Unreviewed => "unreviewed",
+    }
+}
+
+/// The hunk's resolved intent: the matched edit's, else the file fallback.
+fn resolved_intent(state: &AppState, file: &FileChange, hunk: &Hunk) -> Option<(String, &'static str)> {
+    if let Some(intent) = state.hunk_intent.get(&hunk.href) {
+        return Some((intent.text.clone(), "hunk"));
+    }
+    state
+        .intent
+        .get(&file.path)
+        .map(|intent| (intent.text.clone(), "file"))
+}
 
 pub fn render_markdown(state: &AppState) -> String {
     let mut out = String::new();
@@ -34,7 +67,165 @@ pub fn render_markdown(state: &AppState) -> String {
     summary(&mut out, state);
     verification(&mut out, state);
     hunks(&mut out, state);
+    unreviewed_checklist(&mut out, state);
     out
+}
+
+/// Structured twin of the markdown report, for piping into tools/agents.
+pub fn render_json(state: &AppState) -> String {
+    let counts = state.counts();
+    let noted = state
+        .diff
+        .files
+        .iter()
+        .flat_map(|f| &f.hunks)
+        .filter(|h| state.review.notes.contains_key(&h.href))
+        .count();
+
+    let findings = state
+        .diff
+        .files
+        .iter()
+        .flat_map(|file| {
+            reportable_hunks(state, file).into_iter().map(move |hunk| {
+                let intent = resolved_intent(state, file, hunk);
+                JsonFinding {
+                    path: file.path.display().to_string(),
+                    header: hunk.header.clone(),
+                    fingerprint: hunk.href.fingerprint,
+                    verdict: verdict_label(state.review.verdict(&hunk.href)).to_string(),
+                    note: state.review.notes.get(&hunk.href).cloned(),
+                    intent_scope: intent.as_ref().map(|(_, scope)| (*scope).to_string()),
+                    intent: intent.map(|(text, _)| text),
+                    diff: hunk_text(hunk),
+                }
+            })
+        })
+        .collect();
+
+    let doc = JsonReport {
+        base: state
+            .session
+            .as_ref()
+            .map(|s| s.base_label.clone())
+            .unwrap_or_else(|| base_label(&state.diff.base)),
+        session: state.session.as_ref().map(|s| JsonSession {
+            id: s.id.clone(),
+            provider: match s.provider {
+                Provider::Claude => "claude".to_string(),
+                Provider::Copilot => "copilot".to_string(),
+            },
+            title: s.title.clone(),
+            live: s.live,
+        }),
+        summary: JsonSummary {
+            total: counts.total,
+            approved: counts.reviewed - counts.needs_attention,
+            flagged: counts.needs_attention,
+            unreviewed: counts.total - counts.reviewed,
+            notes: noted,
+            changed_since_reviewed: counts.changed_since_reviewed,
+        },
+        verification: state
+            .session
+            .iter()
+            .flat_map(|s| &s.commands)
+            .filter(|c| c.kind.is_verification())
+            .map(|c| JsonCommand {
+                kind: c.kind.label().to_string(),
+                command: c.command.clone(),
+                outcome: match c.outcome {
+                    CommandOutcome::Ok => "ok".to_string(),
+                    CommandOutcome::Failed => "failed".to_string(),
+                    CommandOutcome::Unknown => "unknown".to_string(),
+                },
+                output_excerpt: c.output_excerpt.clone(),
+            })
+            .collect(),
+        findings,
+        unreviewed: unreviewed_refs(state)
+            .into_iter()
+            .map(|(file, hunk)| JsonHunkId {
+                path: file.path.display().to_string(),
+                header: hunk.header.clone(),
+                fingerprint: hunk.href.fingerprint,
+            })
+            .collect(),
+    };
+    let mut out = serde_json::to_string_pretty(&doc).unwrap_or_else(|_| "{}".to_string());
+    out.push('\n');
+    out
+}
+
+#[derive(Serialize)]
+struct JsonReport {
+    base: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    session: Option<JsonSession>,
+    summary: JsonSummary,
+    verification: Vec<JsonCommand>,
+    findings: Vec<JsonFinding>,
+    unreviewed: Vec<JsonHunkId>,
+}
+
+#[derive(Serialize)]
+struct JsonSession {
+    id: String,
+    provider: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<String>,
+    live: bool,
+}
+
+#[derive(Serialize)]
+struct JsonSummary {
+    total: usize,
+    approved: usize,
+    flagged: usize,
+    unreviewed: usize,
+    notes: usize,
+    changed_since_reviewed: usize,
+}
+
+#[derive(Serialize)]
+struct JsonCommand {
+    kind: String,
+    command: String,
+    outcome: String,
+    output_excerpt: String,
+}
+
+#[derive(Serialize)]
+struct JsonFinding {
+    path: String,
+    header: String,
+    fingerprint: u64,
+    verdict: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    note: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    intent: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    intent_scope: Option<String>,
+    diff: String,
+}
+
+#[derive(Serialize)]
+struct JsonHunkId {
+    path: String,
+    header: String,
+    fingerprint: u64,
+}
+
+/// Every hunk still without a verdict, in diff order.
+fn unreviewed_refs(state: &AppState) -> Vec<(&FileChange, &Hunk)> {
+    state
+        .diff
+        .files
+        .iter()
+        .flat_map(|file| file.hunks.iter().map(move |hunk| (file, hunk)))
+        .filter(|(_, hunk)| state.review.verdict(&hunk.href) == HunkVerdict::Unreviewed)
+        .collect()
 }
 
 fn summary(out: &mut String, state: &AppState) {
@@ -102,14 +293,7 @@ fn verification(out: &mut String, state: &AppState) {
 fn hunks(out: &mut String, state: &AppState) {
     let mut any = false;
     for file in &state.diff.files {
-        let reportable: Vec<&Hunk> = file
-            .hunks
-            .iter()
-            .filter(|h| {
-                state.review.verdict(&h.href) == HunkVerdict::NeedsAttention
-                    || state.review.notes.contains_key(&h.href)
-            })
-            .collect();
+        let reportable = reportable_hunks(state, file);
         if reportable.is_empty() {
             continue;
         }
@@ -128,12 +312,21 @@ fn hunks(out: &mut String, state: &AppState) {
         }
 
         for hunk in reportable {
-            let verdict = match state.review.verdict(&hunk.href) {
-                HunkVerdict::NeedsAttention => "flagged",
-                HunkVerdict::Approved => "approved",
-                HunkVerdict::Unreviewed => "unreviewed",
-            };
+            let verdict = verdict_label(state.review.verdict(&hunk.href));
             let _ = writeln!(out, "#### `{}` — {verdict}\n", hunk.header);
+            // The specific edit's reasoning, when it differs from the
+            // file-level intent already quoted above.
+            if let Some(hunk_intent) = state.hunk_intent.get(&hunk.href)
+                && state
+                    .intent
+                    .get(&file.path)
+                    .is_none_or(|fi| fi.text != hunk_intent.text)
+            {
+                for line in hunk_intent.text.lines() {
+                    let _ = writeln!(out, "> {line}");
+                }
+                out.push('\n');
+            }
             if let Some(note) = state.review.notes.get(&hunk.href) {
                 let _ = writeln!(out, "Note: {note}\n");
             }
@@ -142,6 +335,19 @@ fn hunks(out: &mut String, state: &AppState) {
     }
     if !any {
         let _ = writeln!(out, "No flagged hunks or notes.");
+    }
+}
+
+/// What's left: a checkbox per verdict-less hunk, so the report doubles as a
+/// "where I left off" record.
+fn unreviewed_checklist(out: &mut String, state: &AppState) {
+    let remaining = unreviewed_refs(state);
+    if remaining.is_empty() {
+        return;
+    }
+    let _ = writeln!(out, "\n## Unreviewed hunks\n");
+    for (file, hunk) in remaining {
+        let _ = writeln!(out, "- [ ] `{}` — `{}`", file.path.display(), hunk.header);
     }
 }
 
@@ -231,8 +437,12 @@ mod tests {
                 is_binary: false,
                 is_created: false,
                 language: Some("rust".into()),
-                hunks: vec![hunk(1, "@@ -1,2 +1,2 @@ fn main()"), hunk(2, "@@ -9,2 +9,2 @@")],
-                stats: (2, 2),
+                hunks: vec![
+                    hunk(1, "@@ -1,2 +1,2 @@ fn main()"),
+                    hunk(2, "@@ -9,2 +9,2 @@"),
+                    hunk(3, "@@ -20,2 +20,2 @@"),
+                ],
+                stats: (3, 3),
             }],
         };
 
@@ -250,10 +460,21 @@ mod tests {
         state.intent.insert(
             path.clone(),
             Intent {
-                file_path: path,
+                file_path: path.clone(),
                 text: "Bump the constant so the example reflects the new default.".into(),
                 source_uuid: "a1".into(),
                 confidence: 0.9,
+            },
+        );
+        // The flagged hunk was matched to a specific edit with its own "why".
+        let flagged_href = state.diff.files[0].hunks[0].href.clone();
+        state.hunk_intent.insert(
+            flagged_href,
+            Intent {
+                file_path: path,
+                text: "Bump x specifically for the doctest.".into(),
+                source_uuid: "a2".into(),
+                confidence: 1.0,
             },
         );
         state.session = Some(SessionSummary {
@@ -293,6 +514,11 @@ mod tests {
     }
 
     #[test]
+    fn json_report_snapshot() {
+        insta::assert_snapshot!(render_json(&sample_state()));
+    }
+
+    #[test]
     fn report_without_session_or_verdicts() {
         let state = AppState::new(
             Diff {
@@ -306,5 +532,11 @@ mod tests {
         let report = render_markdown(&state);
         assert!(report.contains("working tree vs HEAD"));
         assert!(report.contains("No flagged hunks or notes."));
+        // Nothing to review → no dangling checklist heading.
+        assert!(!report.contains("Unreviewed hunks"));
+
+        let json = render_json(&state);
+        assert!(json.contains("\"findings\": []"));
+        assert!(json.contains("\"unreviewed\": []"));
     }
 }

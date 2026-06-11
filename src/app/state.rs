@@ -7,7 +7,7 @@ use crate::domain::session::{CommandRun, Intent, Provider};
 
 use super::keymap::Keymap;
 use super::rows::{self, FlatDiff, Row};
-use crate::session::intent::IntentMap;
+use crate::session::intent::{HunkIntentMap, IntentMap};
 
 /// Top-level screen. Phase 1 has only the review view; the session picker and
 /// risk inbox arrive in later phases.
@@ -60,6 +60,15 @@ pub struct SessionListItem {
     pub is_current: bool,
 }
 
+/// How precisely an intent is anchored to the cursor position.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum IntentScope {
+    /// Matched to this exact hunk by the edit's content.
+    Hunk,
+    /// The file's most recent intent — the coarse fallback.
+    File,
+}
+
 /// Aggregate review progress for the status bar.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct ReviewCounts {
@@ -94,6 +103,9 @@ pub struct AppState {
     // --- Session integration (Phase 2) ---
     /// Repo-relative path → the agent's stated intent for that file.
     pub intent: IntentMap,
+    /// Hunk → the intent of the specific edit that produced it, matched by
+    /// content. Preferred over the per-file map when a hunk is present.
+    pub hunk_intent: HunkIntentMap,
     /// Loaded-session header, or `None` under the git-only fallback.
     pub session: Option<SessionSummary>,
     /// Show the full intent text vs. a compact preview.
@@ -117,6 +129,9 @@ pub struct AppState {
     pub search_edit: Option<String>,
     /// Committed search query; `m`/`M` jump between matching rows.
     pub search_query: Option<String>,
+    /// Visible rows matching `search_query`, for the statusbar. Recounted when
+    /// the query commits and whenever the flattened rows are rebuilt.
+    pub search_matches: usize,
     /// Set when the user asks to open the cursor's file in their editor; the
     /// run loop suspends the TUI, launches it, and re-diffs on return.
     pub pending_edit: Option<EditRequest>,
@@ -141,6 +156,7 @@ impl AppState {
             viewport_height: 1,
             pending_key: None,
             intent: IntentMap::new(),
+            hunk_intent: HunkIntentMap::new(),
             session: None,
             intent_detail: false,
             show_verify: false,
@@ -152,6 +168,7 @@ impl AppState {
             note_edit: None,
             search_edit: None,
             search_query: None,
+            search_matches: 0,
             pending_edit: None,
             keymap: Keymap::default(),
         }
@@ -171,12 +188,14 @@ impl AppState {
         &mut self,
         diff: Diff,
         intent: IntentMap,
+        hunk_intent: HunkIntentMap,
         session: Option<SessionSummary>,
         sessions: Vec<SessionListItem>,
     ) {
         let anchor = self.current_hunk_ref();
         self.diff = diff;
         self.intent = intent;
+        self.hunk_intent = hunk_intent;
         self.session = session;
         // Preserve the picker's current-session marker across the swap.
         if !sessions.is_empty() {
@@ -202,11 +221,17 @@ impl AppState {
         })
     }
 
-    /// The agent's intent for the file under the cursor, if any.
-    pub fn current_intent(&self) -> Option<&Intent> {
+    /// The agent's intent for the cursor position: the specific edit's intent
+    /// when the hunk was content-matched to one, else the file-level fallback.
+    pub fn current_intent(&self) -> Option<(&Intent, IntentScope)> {
+        if let Some(href) = self.current_hunk_ref()
+            && let Some(intent) = self.hunk_intent.get(&href)
+        {
+            return Some((intent, IntentScope::Hunk));
+        }
         let row = self.current_row()?;
         let path = &self.diff.files.get(row.file())?.path;
-        self.intent.get(path)
+        self.intent.get(path).map(|i| (i, IntentScope::File))
     }
 
     /// Rebuild the flattened rows after the diff or collapse state changes,
@@ -216,7 +241,39 @@ impl AppState {
         if self.cursor > self.flat.last_index() {
             self.cursor = self.flat.last_index();
         }
+        self.recount_matches();
         self.ensure_cursor_visible();
+    }
+
+    /// Case-insensitive match of a flattened row against a lowercased needle:
+    /// file path for headers/summaries, hunk header text, or the line's text.
+    pub fn row_matches(&self, idx: usize, needle: &str) -> bool {
+        let Some(row) = self.flat.get(idx) else {
+            return false;
+        };
+        let Some(file) = self.diff.files.get(row.file()) else {
+            return false;
+        };
+        let hay = match row {
+            Row::FileHeader { .. } | Row::CollapsedSummary { .. } => {
+                file.path.display().to_string()
+            }
+            Row::HunkHeader { hunk, .. } => file.hunks[hunk].header.clone(),
+            Row::Line { hunk, line, .. } => file.hunks[hunk].lines[line].text.clone(),
+        };
+        hay.to_lowercase().contains(needle)
+    }
+
+    /// Refresh `search_matches` for the current query over the visible rows.
+    pub fn recount_matches(&mut self) {
+        let Some(query) = &self.search_query else {
+            self.search_matches = 0;
+            return;
+        };
+        let needle = query.to_lowercase();
+        self.search_matches = (0..self.flat.len())
+            .filter(|&i| self.row_matches(i, &needle))
+            .count();
     }
 
     /// Keep the cursor within the visible window, then clamp the scroll so we
@@ -359,11 +416,50 @@ mod tests {
         // A re-diff prepends a new hunk (h2 shifts down) but keeps h2 unchanged.
         let h0 = hunk("a.rs", 99, "inserted");
         let new_diff = diff_with(vec![h0, h1, h2.clone()]);
-        state.apply_rediff(new_diff, IntentMap::new(), None, Vec::new());
+        state.apply_rediff(
+            new_diff,
+            IntentMap::new(),
+            HunkIntentMap::new(),
+            None,
+            Vec::new(),
+        );
 
         // Cursor stays on the same logical hunk; its verdict survives.
         assert_eq!(state.current_hunk_ref(), Some(h2.href.clone()));
         assert_eq!(state.review.verdict(&h2.href), HunkVerdict::Approved);
         assert_eq!(state.counts().reviewed, 1);
+    }
+
+    #[test]
+    fn current_intent_prefers_the_hunk_match_over_the_file_fallback() {
+        let h = hunk("a.rs", 11, "first");
+        let mut state = AppState::new(
+            diff_with(vec![h.clone()]),
+            ReviewState::default(),
+            PathBuf::from("/tmp/r.toml"),
+        );
+        state.viewport_height = 100;
+        let intent_for = |text: &str| Intent {
+            file_path: PathBuf::from("a.rs"),
+            text: text.into(),
+            source_uuid: "u".into(),
+            confidence: 0.9,
+        };
+        state
+            .intent
+            .insert(PathBuf::from("a.rs"), intent_for("file-level why"));
+        state
+            .hunk_intent
+            .insert(h.href.clone(), intent_for("hunk-level why"));
+
+        state.cursor = state.row_for_hunk(&h.href).unwrap();
+        let (intent, scope) = state.current_intent().unwrap();
+        assert_eq!(intent.text, "hunk-level why");
+        assert_eq!(scope, IntentScope::Hunk);
+
+        state.hunk_intent.clear();
+        let (intent, scope) = state.current_intent().unwrap();
+        assert_eq!(intent.text, "file-level why");
+        assert_eq!(scope, IntentScope::File);
     }
 }

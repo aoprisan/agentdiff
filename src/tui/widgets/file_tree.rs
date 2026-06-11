@@ -99,7 +99,7 @@ fn verdict_rollup(state: &AppState, file: &FileChange) -> Option<Span<'static>> 
     }
     if needs > 0 {
         Some(Span::styled(
-            "  ✗",
+            format!("  ✗{needs}"),
             Style::default().fg(theme::needs_attention_fg()),
         ))
     } else if approved == file.hunks.len() {

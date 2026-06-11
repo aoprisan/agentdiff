@@ -15,7 +15,10 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     };
 
     let width = 64.min(area.width);
-    let height = 7.min(area.height);
+    // Grow with the note's lines (border + content + blank + hint), capped so
+    // a long note scrolls out of view instead of eating the screen.
+    let note_lines = edit.buffer.split('\n').count() as u16;
+    let height = (note_lines + 4).clamp(7, 14).min(area.height);
     let popup = centered(area, width, height);
     frame.render_widget(Clear, popup);
 
@@ -26,17 +29,23 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     let inner = block.inner(popup);
     frame.render_widget(block, popup);
 
-    // A trailing block cursor so the caret is visible.
-    let lines = vec![
-        Line::styled(format!("{}\u{2588}", edit.buffer), Style::default()),
-        Line::from(""),
-        Line::styled(
-            "Enter: save    Esc: cancel",
-            Style::default()
-                .fg(theme::gutter_fg())
-                .add_modifier(Modifier::DIM),
-        ),
-    ];
+    // One rendered line per buffer line, with a block cursor on the last so
+    // the caret stays visible across Alt+Enter newlines.
+    let mut buffer_lines: Vec<String> = edit.buffer.split('\n').map(str::to_string).collect();
+    if let Some(last) = buffer_lines.last_mut() {
+        last.push('\u{2588}');
+    }
+    let mut lines: Vec<Line> = buffer_lines
+        .into_iter()
+        .map(|l| Line::styled(l, Style::default()))
+        .collect();
+    lines.push(Line::from(""));
+    lines.push(Line::styled(
+        "Enter: save    Alt-Enter: newline    Esc: cancel",
+        Style::default()
+            .fg(theme::gutter_fg())
+            .add_modifier(Modifier::DIM),
+    ));
     frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), inner);
 }
 

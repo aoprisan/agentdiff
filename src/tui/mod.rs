@@ -155,7 +155,13 @@ fn event_loop(
             Ok(AppEvent::DiffReady { generation, bundle }) => {
                 if generation == state.generation {
                     let bundle = *bundle;
-                    state.apply_rediff(bundle.diff, bundle.intent, bundle.session, bundle.sessions);
+                    state.apply_rediff(
+                        bundle.diff,
+                        bundle.intent,
+                        bundle.hunk_intent,
+                        bundle.session,
+                        bundle.sessions,
+                    );
                     // Indices changed, so cached highlights may be stale.
                     highlighter.clear();
                 }
@@ -576,6 +582,16 @@ mod tests {
             href,
             buffer: "double-check the off-by-one".into(),
         });
+        insta::assert_snapshot!(render_to_string(&state));
+    }
+
+    #[test]
+    fn renders_flag_badge_and_match_count() {
+        let mut state = sample_state();
+        let href = state.diff.files[0].hunks[0].href.clone();
+        state.review.set_verdict(href, HunkVerdict::NeedsAttention);
+        state.search_query = Some("let".into());
+        state.recount_matches();
         insta::assert_snapshot!(render_to_string(&state));
     }
 
