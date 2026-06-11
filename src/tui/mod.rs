@@ -277,6 +277,8 @@ fn render(frame: &mut Frame, state: &AppState, highlighter: &mut Highlighter) {
     }
     if state.note_edit.is_some() {
         widgets::notes::render(frame, frame.area(), state);
+    } else if state.search_edit.is_some() {
+        widgets::search::render(frame, frame.area(), state);
     } else if state.show_picker {
         widgets::session_picker::render(frame, frame.area(), state);
     } else if state.show_verify {
@@ -532,6 +534,13 @@ mod tests {
             href,
             buffer: "double-check the off-by-one".into(),
         });
+        insta::assert_snapshot!(render_to_string(&state));
+    }
+
+    #[test]
+    fn renders_search_prompt() {
+        let mut state = sample_state();
+        state.search_edit = Some("let x".into());
         insta::assert_snapshot!(render_to_string(&state));
     }
 

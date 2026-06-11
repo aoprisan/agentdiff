@@ -39,5 +39,10 @@ pub enum Command {
     // Notes (Phase 3).
     EditNote,
 
+    // Search.
+    OpenSearch,
+    NextMatch,
+    PrevMatch,
+
     Noop,
 }

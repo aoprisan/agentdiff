@@ -103,6 +103,8 @@ It needs a real terminal (TTY). `agentdiff --help` prints the full CLI surface.
 | `}` / `{` | Next / previous file |
 | `gg` / `G` | Top / bottom |
 | `Space` | Collapse / expand file |
+| `/` | Search (paths, hunk headers, line text) |
+| `m` / `M` | Next / previous search match (wraps) |
 | `a` | Approve hunk |
 | `x` | Flag hunk (needs attention) |
 | `u` | Clear verdict |
@@ -136,7 +138,8 @@ approve = "v"
 Overridable command names: `quit`, `help`, `cursor_down`, `cursor_up`,
 `next_file`, `prev_file`, `goto_bottom`, `toggle_collapse`, `approve`,
 `needs_attention`, `unset`, `session_picker`, `intent_detail`, `verification`,
-`edit_note`. (Ctrl-chords, two-key sequences, and special keys are fixed.)
+`edit_note`, `search`, `next_match`, `prev_match`. (Ctrl-chords, two-key
+sequences, and special keys are fixed.)
 
 ## How it works
 

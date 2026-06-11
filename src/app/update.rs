@@ -13,9 +13,14 @@ use super::{AppEvent, AppState};
 pub fn update(state: &mut AppState, event: AppEvent) {
     match event {
         AppEvent::Input(Event::Key(key)) => {
-            // While editing a note, keystrokes are text, not commands.
+            // While editing a note or a search query, keystrokes are text,
+            // not commands.
             if state.note_edit.is_some() {
                 edit_note_key(state, key);
+                return;
+            }
+            if state.search_edit.is_some() {
+                edit_search_key(state, key);
                 return;
             }
             match state.keymap.resolve(key, state.pending_key) {
@@ -77,6 +82,7 @@ fn apply(state: &mut AppState, command: Command) {
         Command::CloseOverlay => {
             state.show_help = false;
             state.show_verify = false;
+            state.search_query = None;
         }
 
         Command::OpenSessionPicker => open_picker(state),
@@ -125,6 +131,10 @@ fn apply(state: &mut AppState, command: Command) {
         Command::Unset => set_verdict(state, HunkVerdict::Unreviewed),
         Command::EditNote => open_note_editor(state),
 
+        Command::OpenSearch => state.search_edit = Some(String::new()),
+        Command::NextMatch => jump_match(state, true),
+        Command::PrevMatch => jump_match(state, false),
+
         Command::Noop => {}
     }
 }
@@ -172,6 +182,85 @@ fn jump_unreviewed(state: &mut AppState, forward: bool) {
     if let Some(r) = target {
         move_cursor(state, r);
     }
+}
+
+/// Route a keypress into the search prompt. `Enter` commits the query and jumps
+/// to the first match at or after the cursor; `Esc` cancels.
+fn edit_search_key(state: &mut AppState, key: ratatui::crossterm::event::KeyEvent) {
+    if key.kind != KeyEventKind::Press {
+        return;
+    }
+    let Some(buffer) = state.search_edit.as_mut() else {
+        return;
+    };
+    match key.code {
+        KeyCode::Esc => state.search_edit = None,
+        KeyCode::Enter => commit_search(state),
+        KeyCode::Backspace => {
+            buffer.pop();
+        }
+        KeyCode::Char(c) => buffer.push(c),
+        _ => {}
+    }
+}
+
+fn commit_search(state: &mut AppState) {
+    let Some(buffer) = state.search_edit.take() else {
+        return;
+    };
+    let query = buffer.trim().to_string();
+    if query.is_empty() {
+        state.search_query = None;
+        return;
+    }
+    let needle = query.to_lowercase();
+    state.search_query = Some(query);
+    if !row_matches(state, state.cursor, &needle) {
+        jump_match(state, true);
+    }
+}
+
+/// Move to the next/previous row matching the committed query, wrapping.
+fn jump_match(state: &mut AppState, forward: bool) {
+    let Some(query) = &state.search_query else {
+        return;
+    };
+    let needle = query.to_lowercase();
+    let n = state.flat.len();
+    if n == 0 {
+        return;
+    }
+    let target = (1..=n)
+        .map(|step| {
+            if forward {
+                (state.cursor + step) % n
+            } else {
+                (state.cursor + n - step) % n
+            }
+        })
+        .find(|&idx| row_matches(state, idx, &needle));
+    if let Some(idx) = target {
+        move_cursor(state, idx);
+    }
+}
+
+/// Case-insensitive match of a flattened row against a lowercased needle: file
+/// path for headers/summaries, hunk header text, or the line's own text.
+fn row_matches(state: &AppState, idx: usize, needle: &str) -> bool {
+    let Some(row) = state.flat.get(idx) else {
+        return false;
+    };
+    let Some(file) = state.diff.files.get(row.file()) else {
+        return false;
+    };
+    let hay = match row {
+        rows::Row::FileHeader { .. } | rows::Row::CollapsedSummary { .. } => {
+            file.path.display().to_string()
+        }
+        rows::Row::HunkHeader { hunk, .. } => file.hunks[hunk].header.clone(),
+        rows::Row::Line { hunk, line, .. } => file.hunks[hunk].lines[line].text.clone(),
+    };
+    hay.to_lowercase().contains(needle)
 }
 
 fn move_cursor(state: &mut AppState, to: usize) {
@@ -331,6 +420,61 @@ mod tests {
         assert_eq!(state.cursor, 5); // wraps from the top to the last hunk
         apply(&mut state, Command::PrevUnreviewed);
         assert_eq!(state.cursor, 3);
+    }
+
+    use ratatui::crossterm::event::{Event, KeyEvent, KeyModifiers};
+
+    fn press(state: &mut AppState, code: KeyCode) {
+        update(
+            state,
+            AppEvent::Input(Event::Key(KeyEvent::new(code, KeyModifiers::NONE))),
+        );
+    }
+
+    #[test]
+    fn search_commits_and_jumps_to_the_matching_row() {
+        let mut state = three_hunk_state();
+        press(&mut state, KeyCode::Char('/'));
+        assert_eq!(state.search_edit.as_deref(), Some(""));
+
+        // Hunk headers are "@@ <fp> @@"; "@@ 3" only matches the third hunk.
+        for c in "@@ 3".chars() {
+            press(&mut state, KeyCode::Char(c));
+        }
+        press(&mut state, KeyCode::Enter);
+
+        assert_eq!(state.search_edit, None);
+        assert_eq!(state.search_query.as_deref(), Some("@@ 3"));
+        assert_eq!(state.cursor, 5); // third hunk header
+    }
+
+    #[test]
+    fn match_motions_wrap_and_esc_clears_the_query() {
+        let mut state = three_hunk_state();
+        state.search_query = Some("@@".into());
+
+        apply(&mut state, Command::NextMatch);
+        assert_eq!(state.cursor, 1);
+        apply(&mut state, Command::NextMatch);
+        assert_eq!(state.cursor, 3);
+        apply(&mut state, Command::PrevMatch);
+        assert_eq!(state.cursor, 1);
+        apply(&mut state, Command::PrevMatch);
+        assert_eq!(state.cursor, 5); // wraps backwards to the last header
+
+        press(&mut state, KeyCode::Esc);
+        assert_eq!(state.search_query, None);
+    }
+
+    #[test]
+    fn esc_cancels_the_search_prompt_without_committing() {
+        let mut state = three_hunk_state();
+        press(&mut state, KeyCode::Char('/'));
+        press(&mut state, KeyCode::Char('z'));
+        press(&mut state, KeyCode::Esc);
+        assert_eq!(state.search_edit, None);
+        assert_eq!(state.search_query, None);
+        assert_eq!(state.cursor, 0);
     }
 
     #[test]

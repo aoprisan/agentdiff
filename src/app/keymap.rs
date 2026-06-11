@@ -85,6 +85,9 @@ impl Keymap {
             KeyCode::Char('i') => Command::ToggleIntentDetail,
             KeyCode::Char('v') => Command::ToggleVerification,
             KeyCode::Char('n') => Command::EditNote,
+            KeyCode::Char('/') => Command::OpenSearch,
+            KeyCode::Char('m') => Command::NextMatch,
+            KeyCode::Char('M') => Command::PrevMatch,
             KeyCode::Enter => Command::Select,
 
             _ => Command::Noop,
@@ -121,6 +124,9 @@ fn command_from_name(name: &str) -> Option<Command> {
         "intent_detail" => Command::ToggleIntentDetail,
         "verification" => Command::ToggleVerification,
         "edit_note" => Command::EditNote,
+        "search" => Command::OpenSearch,
+        "next_match" => Command::NextMatch,
+        "prev_match" => Command::PrevMatch,
         _ => return None,
     })
 }

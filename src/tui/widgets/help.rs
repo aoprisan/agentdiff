@@ -23,6 +23,8 @@ pub fn render(frame: &mut Frame, area: Rect) {
         Line::from("  x            flag (needs attention)"),
         Line::from("  u            clear verdict"),
         Line::from(""),
+        Line::from("  /            search    m / M  next / prev match"),
+        Line::from(""),
         Line::from("  n            add / edit note"),
         Line::from("  s            session picker"),
         Line::from("  i            toggle intent detail"),

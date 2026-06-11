@@ -103,6 +103,10 @@ pub struct AppState {
     pub generation: u64,
     /// Active per-hunk note editor, or `None`.
     pub note_edit: Option<NoteEdit>,
+    /// Search input being typed (`/`), or `None` when the prompt is closed.
+    pub search_edit: Option<String>,
+    /// Committed search query; `m`/`M` jump between matching rows.
+    pub search_query: Option<String>,
     /// Key bindings (defaults + config overrides).
     pub keymap: Keymap,
 }
@@ -133,6 +137,8 @@ impl AppState {
             pending_switch: None,
             generation: 0,
             note_edit: None,
+            search_edit: None,
+            search_query: None,
             keymap: Keymap::default(),
         }
     }
