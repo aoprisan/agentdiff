@@ -1,11 +1,12 @@
 use ratatui::crossterm::event::{Event, KeyCode, KeyEventKind};
 
+use crate::domain::diff::ChangeKind;
 use crate::domain::review::HunkVerdict;
 
 use super::commands::Command;
 use super::keymap::Resolved;
 use super::rows;
-use super::state::NoteEdit;
+use super::state::{EditRequest, NoteEdit};
 use super::{AppEvent, AppState};
 
 /// The single place `AppState` is mutated for input/tick. Filesystem and
@@ -134,6 +135,7 @@ fn apply(state: &mut AppState, command: Command) {
         Command::OpenSearch => state.search_edit = Some(String::new()),
         Command::NextMatch => jump_match(state, true),
         Command::PrevMatch => jump_match(state, false),
+        Command::OpenEditor => request_edit(state),
 
         Command::Noop => {}
     }
@@ -182,6 +184,35 @@ fn jump_unreviewed(state: &mut AppState, forward: bool) {
     if let Some(r) = target {
         move_cursor(state, r);
     }
+}
+
+/// Record a request to open the cursor's file in the user's editor, targeting
+/// the new-side line so the editor lands where the file is on disk now. Deleted
+/// and binary files have nothing useful to open.
+fn request_edit(state: &mut AppState) {
+    let Some(row) = state.current_row() else {
+        return;
+    };
+    let Some(file) = state.diff.files.get(row.file()) else {
+        return;
+    };
+    if file.change == ChangeKind::Deleted || file.is_binary {
+        return;
+    }
+    let line = match row {
+        rows::Row::Line { hunk, line, .. } => {
+            let l = &file.hunks[hunk].lines[line];
+            // A removed line has no new-side number; fall back to the hunk's
+            // new-side start, which is where the deletion happened.
+            l.new_no.unwrap_or(file.hunks[hunk].new.start)
+        }
+        rows::Row::HunkHeader { hunk, .. } => file.hunks[hunk].new.start,
+        rows::Row::FileHeader { .. } | rows::Row::CollapsedSummary { .. } => 1,
+    };
+    state.pending_edit = Some(EditRequest {
+        path: file.path.clone(),
+        line: line.max(1),
+    });
 }
 
 /// Route a keypress into the search prompt. `Enter` commits the query and jumps
@@ -475,6 +506,35 @@ mod tests {
         assert_eq!(state.search_edit, None);
         assert_eq!(state.search_query, None);
         assert_eq!(state.cursor, 0);
+    }
+
+    #[test]
+    fn open_editor_targets_the_cursor_line() {
+        let mut state = three_hunk_state();
+        state.cursor = 4; // the added line of the second hunk (new_no = 1)
+        apply(&mut state, Command::OpenEditor);
+        assert_eq!(
+            state.pending_edit,
+            Some(EditRequest {
+                path: PathBuf::from("a.rs"),
+                line: 1,
+            })
+        );
+    }
+
+    #[test]
+    fn open_editor_clamps_zero_line_hunks_and_skips_deleted_files() {
+        let mut state = three_hunk_state();
+        // A pure-deletion hunk can have new.start == 0; the editor needs 1-based.
+        state.diff.files[0].hunks[0].new.start = 0;
+        state.cursor = 1; // hunk header
+        apply(&mut state, Command::OpenEditor);
+        assert_eq!(state.pending_edit.as_ref().map(|e| e.line), Some(1));
+
+        state.pending_edit = None;
+        state.diff.files[0].change = ChangeKind::Deleted;
+        apply(&mut state, Command::OpenEditor);
+        assert_eq!(state.pending_edit, None);
     }
 
     #[test]

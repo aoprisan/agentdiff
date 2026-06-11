@@ -88,6 +88,7 @@ impl Keymap {
             KeyCode::Char('/') => Command::OpenSearch,
             KeyCode::Char('m') => Command::NextMatch,
             KeyCode::Char('M') => Command::PrevMatch,
+            KeyCode::Char('e') => Command::OpenEditor,
             KeyCode::Enter => Command::Select,
 
             _ => Command::Noop,
@@ -127,6 +128,7 @@ fn command_from_name(name: &str) -> Option<Command> {
         "search" => Command::OpenSearch,
         "next_match" => Command::NextMatch,
         "prev_match" => Command::PrevMatch,
+        "open_editor" => Command::OpenEditor,
         _ => return None,
     })
 }

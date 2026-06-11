@@ -1,12 +1,14 @@
 //! ratatui rendering plus the terminal/event lifecycle. Reads `AppState`;
 //! contains no business logic.
 
+pub mod editor;
 pub mod highlight;
 pub mod layout;
 pub mod theme;
 pub mod widgets;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use std::thread;
 use std::time::Duration;
 
@@ -91,14 +93,34 @@ fn event_loop(
 ) -> anyhow::Result<()> {
     let (tx, rx) = unbounded::<AppEvent>();
 
-    // Blocking input reads live on their own thread. When the loop drops `rx`,
-    // the next `send` fails and this thread exits.
+    // Input reads live on their own thread, poll-based so it can park behind
+    // the gate while an external editor owns the terminal (a blocking
+    // `event::read` would compete with the editor for stdin). When the loop
+    // drops `rx`, the next `send` fails and this thread exits.
+    let gate = Arc::new(editor::InputGate::default());
     {
         let tx = tx.clone();
+        let gate = Arc::clone(&gate);
         thread::spawn(move || {
-            while let Ok(ev) = event::read() {
-                if tx.send(AppEvent::Input(ev)).is_err() {
-                    break;
+            loop {
+                if gate.is_paused() {
+                    gate.set_parked(true);
+                    while gate.is_paused() {
+                        thread::sleep(Duration::from_millis(20));
+                    }
+                    gate.set_parked(false);
+                }
+                match event::poll(Duration::from_millis(100)) {
+                    Ok(true) => match event::read() {
+                        Ok(ev) => {
+                            if tx.send(AppEvent::Input(ev)).is_err() {
+                                break;
+                            }
+                        }
+                        Err(_) => break,
+                    },
+                    Ok(false) => {}
+                    Err(_) => break,
                 }
             }
         });
@@ -141,6 +163,26 @@ fn event_loop(
             Ok(ev) => update(state, ev),
             Err(RecvTimeoutError::Timeout) => update(state, AppEvent::Tick),
             Err(RecvTimeoutError::Disconnected) => break,
+        }
+
+        // `e`: hand the terminal to the user's editor, then take it back and
+        // re-diff unconditionally — the watcher may debounce-miss a quick edit.
+        if let Some(request) = state.pending_edit.take() {
+            match editor::resolve_editor() {
+                Some(cmd) => {
+                    gate.pause();
+                    ratatui::restore();
+                    editor::run(&cmd, repo.workdir(), &request);
+                    *terminal = ratatui::init();
+                    gate.resume();
+                    state.generation += 1;
+                    let _ = req_tx.send(DiffRequest {
+                        generation: state.generation,
+                        selectors: selectors.clone(),
+                    });
+                }
+                None => tracing::warn!("$VISUAL/$EDITOR not set; cannot open editor"),
+            }
         }
 
         if let Some(id) = state.pending_switch.take() {
