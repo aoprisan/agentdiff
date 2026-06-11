@@ -44,5 +44,10 @@ pub enum Command {
     NextMatch,
     PrevMatch,
 
+    /// Open the file under the cursor in `$VISUAL`/`$EDITOR` at the hunk's
+    /// line. The reducer only records the request; the run loop owns the
+    /// terminal suspend/resume.
+    OpenEditor,
+
     Noop,
 }

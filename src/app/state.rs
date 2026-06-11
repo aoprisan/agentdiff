@@ -41,6 +41,16 @@ pub struct NoteEdit {
     pub buffer: String,
 }
 
+/// A request to open the file under the cursor in the user's editor. Recorded
+/// by the reducer; consumed by the run loop, which owns the terminal.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct EditRequest {
+    /// Repo-relative path; the run loop joins it onto the workdir.
+    pub path: PathBuf,
+    /// 1-based line on the new (working-tree) side.
+    pub line: u32,
+}
+
 /// One row in the session picker.
 #[derive(Debug, Clone)]
 pub struct SessionListItem {
@@ -107,6 +117,9 @@ pub struct AppState {
     pub search_edit: Option<String>,
     /// Committed search query; `m`/`M` jump between matching rows.
     pub search_query: Option<String>,
+    /// Set when the user asks to open the cursor's file in their editor; the
+    /// run loop suspends the TUI, launches it, and re-diffs on return.
+    pub pending_edit: Option<EditRequest>,
     /// Key bindings (defaults + config overrides).
     pub keymap: Keymap,
 }
@@ -139,6 +152,7 @@ impl AppState {
             note_edit: None,
             search_edit: None,
             search_query: None,
+            pending_edit: None,
             keymap: Keymap::default(),
         }
     }

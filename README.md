@@ -35,6 +35,8 @@ other commit: flat, intent-free, and not scoped to "what this one run touched."
 - **Close the loop.** `agentdiff --report` prints the review as markdown —
   flagged hunks with their diffs, your notes, the correlated intent, and the
   verification outcomes — ready to pipe back to the agent as a follow-up task.
+  For small fixes, `e` suspends the TUI and opens the file in your
+  `$VISUAL`/`$EDITOR` at the hunk's line; the diff refreshes when you return.
 - **Fast, large-diff rendering.** Virtualized diff pane and lazy, viewport-only
   syntax highlighting — it stays responsive on generated files.
 
@@ -108,6 +110,7 @@ It needs a real terminal (TTY). `agentdiff --help` prints the full CLI surface.
 | `a` | Approve hunk |
 | `x` | Flag hunk (needs attention) |
 | `u` | Clear verdict |
+| `e` | Open the file in `$VISUAL`/`$EDITOR` at the hunk's line |
 | `n` | Add / edit note |
 | `s` | Session picker |
 | `i` | Toggle intent detail |
@@ -138,8 +141,8 @@ approve = "v"
 Overridable command names: `quit`, `help`, `cursor_down`, `cursor_up`,
 `next_file`, `prev_file`, `goto_bottom`, `toggle_collapse`, `approve`,
 `needs_attention`, `unset`, `session_picker`, `intent_detail`, `verification`,
-`edit_note`, `search`, `next_match`, `prev_match`. (Ctrl-chords, two-key
-sequences, and special keys are fixed.)
+`edit_note`, `search`, `next_match`, `prev_match`, `open_editor`. (Ctrl-chords,
+two-key sequences, and special keys are fixed.)
 
 ## How it works
 

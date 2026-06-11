@@ -25,6 +25,7 @@ pub fn render(frame: &mut Frame, area: Rect) {
         Line::from(""),
         Line::from("  /            search    m / M  next / prev match"),
         Line::from(""),
+        Line::from("  e            open file in $EDITOR at hunk"),
         Line::from("  n            add / edit note"),
         Line::from("  s            session picker"),
         Line::from("  i            toggle intent detail"),
