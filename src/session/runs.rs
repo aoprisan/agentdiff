@@ -145,6 +145,7 @@ pub fn segment(records: &[Record]) -> Segmentation {
                         tool,
                         message_uuid: entry.uuid.clone().unwrap_or_default(),
                         parent_uuid: entry.parent_uuid.clone(),
+                        timestamp: ts,
                     });
                 }
 

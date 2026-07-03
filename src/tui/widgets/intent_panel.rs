@@ -95,7 +95,9 @@ fn header(state: &AppState) -> Vec<Line<'static>> {
 
     // What the agent ran to verify itself, if anything — the read-only twin of
     // the per-file intent below.
-    if let Some(verify) = super::verification::summary_line(&session.commands) {
+    if let Some(verify) =
+        super::verification::summary_line(&session.commands, session.verify_stale)
+    {
         lines.push(verify);
     }
     lines

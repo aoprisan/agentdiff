@@ -32,6 +32,7 @@ expression: render_json(&sample_state())
       "output_excerpt": "error: unused variable `x`"
     }
   ],
+  "verification_stale": false,
   "findings": [
     {
       "path": "src/main.rs",

@@ -142,6 +142,7 @@ pub fn render_json(state: &AppState) -> String {
                 output_excerpt: c.output_excerpt.clone(),
             })
             .collect(),
+        verification_stale: state.session.as_ref().is_some_and(|s| s.verify_stale),
         findings,
         unreviewed: unreviewed_refs(state)
             .into_iter()
@@ -164,6 +165,8 @@ struct JsonReport {
     session: Option<JsonSession>,
     summary: JsonSummary,
     verification: Vec<JsonCommand>,
+    /// The last verification command predates the run's final edits.
+    verification_stale: bool,
     findings: Vec<JsonFinding>,
     unreviewed: Vec<JsonHunkId>,
 }
@@ -279,6 +282,12 @@ fn verification(out: &mut String, state: &AppState) {
             CommandOutcome::Unknown => "·",
         };
         let _ = writeln!(out, "- {mark} {} — `{}`", cmd.kind.label(), cmd.command);
+    }
+    if session.verify_stale {
+        let _ = writeln!(
+            out,
+            "\n⚠ Stale: the last verification ran **before** the run's final edits."
+        );
     }
     out.push('\n');
     for cmd in checks {
@@ -505,6 +514,7 @@ mod tests {
                     timestamp: None,
                 },
             ],
+            verify_stale: false,
         });
         state
     }

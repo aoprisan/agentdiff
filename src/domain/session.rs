@@ -62,6 +62,9 @@ pub struct ToolEditEvent {
     pub tool: EditTool,
     pub message_uuid: String,
     pub parent_uuid: Option<String>,
+    /// When the edit was issued; drives the verification-staleness check.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timestamp: Option<Timestamp>,
 }
 
 /// Coarse classification of a shell command the agent ran, used to single out

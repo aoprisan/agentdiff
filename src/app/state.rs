@@ -32,6 +32,9 @@ pub struct SessionSummary {
     /// Shell commands the selected run ran, for the verification badge/overlay.
     /// Empty under the git-only fallback or for a run that ran nothing.
     pub commands: Vec<CommandRun>,
+    /// The run's last verification command ran *before* its last edit — the ✓
+    /// may not reflect the state being reviewed.
+    pub verify_stale: bool,
 }
 
 /// In-progress per-hunk note edit (a tiny modal input).

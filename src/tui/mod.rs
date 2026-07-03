@@ -599,6 +599,7 @@ mod tests {
             base_label: "agent run 1/1 (acceptEdits)".into(),
             live: true,
             commands: sample_commands(),
+            verify_stale: false,
         });
         state.intent.insert(
             PathBuf::from("src/main.rs"),
@@ -625,6 +626,7 @@ mod tests {
             base_label: "agent run 1/1 (acceptEdits)".into(),
             live: false,
             commands: sample_commands(),
+            verify_stale: false,
         });
         state.show_verify = true;
         insta::assert_snapshot!(render_to_string(&state));

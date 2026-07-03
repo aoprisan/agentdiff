@@ -202,7 +202,29 @@ fn summarize(ctx: &SessionContext, base: &DiffBase) -> SessionSummary {
             .selected()
             .map(|r| r.commands.clone())
             .unwrap_or_default(),
+        verify_stale: ctx.selected().is_some_and(verification_stale),
     }
+}
+
+/// Whether the run's verification evidence predates its final edits: a ✓ badge
+/// from a `cargo test` that ran *before* the last three edits proves nothing
+/// about the state under review. Timestamps must exist on both sides to claim
+/// staleness — missing data never cries wolf.
+fn verification_stale(run: &crate::domain::session::AgentRun) -> bool {
+    use crate::domain::session::CommandKind;
+    let last_edit = run.edits.iter().filter_map(|e| Some(e.timestamp?.0)).max();
+    let last_verify = run
+        .commands
+        .iter()
+        .filter(|c| {
+            matches!(
+                c.kind,
+                CommandKind::Test | CommandKind::Build | CommandKind::Lint | CommandKind::Format
+            )
+        })
+        .filter_map(|c| Some(c.timestamp?.0))
+        .max();
+    matches!((last_edit, last_verify), (Some(edit), Some(verify)) if verify < edit)
 }
 
 /// How stale a transcript may be while its open run still counts as live.
@@ -266,5 +288,53 @@ fn session_items(
                 })
                 .collect()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::Timestamp;
+    use crate::domain::session::{
+        AgentRun, CommandKind, CommandOutcome, CommandRun, EditTool, RunId, ToolEditEvent,
+    };
+    use std::collections::HashMap;
+
+    fn run_with(edit_ts: Option<i64>, verify_ts: Option<i64>) -> AgentRun {
+        AgentRun {
+            id: RunId(0),
+            mode: PermissionMode::AcceptEdits,
+            started: Timestamp(0),
+            ended: None,
+            snapshot: HashMap::new(),
+            base_commit: None,
+            edits: vec![ToolEditEvent {
+                file_path: "a.rs".into(),
+                tool: EditTool::Edit,
+                message_uuid: "m".into(),
+                parent_uuid: None,
+                timestamp: edit_ts.map(Timestamp),
+            }],
+            commands: vec![CommandRun {
+                command: "cargo test".into(),
+                description: None,
+                kind: CommandKind::Test,
+                outcome: CommandOutcome::Ok,
+                output_excerpt: String::new(),
+                message_uuid: "c".into(),
+                timestamp: verify_ts.map(Timestamp),
+            }],
+        }
+    }
+
+    #[test]
+    fn verification_is_stale_only_when_edits_postdate_the_last_check() {
+        // Test ran after the last edit → fresh.
+        assert!(!verification_stale(&run_with(Some(10), Some(20))));
+        // Edits landed after the last test → stale.
+        assert!(verification_stale(&run_with(Some(30), Some(20))));
+        // Missing timestamps on either side must not cry wolf.
+        assert!(!verification_stale(&run_with(None, Some(20))));
+        assert!(!verification_stale(&run_with(Some(30), None)));
     }
 }
