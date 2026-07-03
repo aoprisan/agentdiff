@@ -46,16 +46,24 @@ pub fn diff_worktree_vs_head(repo: &Repo) -> Result<Diff> {
     }
 
     files.extend(untracked::collect(repo)?);
-    files.sort_by(|a, b| a.path.cmp(&b.path));
-    for (i, file) in files.iter_mut().enumerate() {
-        file.id = FileId(i as u32);
-    }
+    finalize_files(&mut files);
 
     Ok(Diff {
         base: DiffBase::WorkingTreeVsHead,
         files,
         generated_at: Timestamp::now(),
     })
+}
+
+/// Shared assembly tail for every diff builder: stable file order, sequential
+/// ids, and per-file disambiguation of identical hunks (so each gets its own
+/// `HunkRef` and verdicts can't smear across repeated code).
+fn finalize_files(files: &mut [FileChange]) {
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    for (i, file) in files.iter_mut().enumerate() {
+        file.id = FileId(i as u32);
+        crate::domain::ids::disambiguate_duplicates(&mut file.hunks);
+    }
 }
 
 /// Build the staged diff (HEAD tree vs index) for `DiffBase::WorkingTreeVsIndex`.
@@ -106,10 +114,7 @@ fn collect_tree_diff(mut git_diff: git2::Diff<'_>, base: DiffBase) -> Result<Dif
             files.push(file);
         }
     }
-    files.sort_by(|a, b| a.path.cmp(&b.path));
-    for (i, file) in files.iter_mut().enumerate() {
-        file.id = FileId(i as u32);
-    }
+    finalize_files(&mut files);
     Ok(Diff {
         base,
         files,
@@ -322,10 +327,7 @@ pub fn diff_agent_run(repo: &Repo, session: &SessionId, run: &AgentRun) -> Resul
         });
     }
 
-    files.sort_by(|a, b| a.path.cmp(&b.path));
-    for (i, file) in files.iter_mut().enumerate() {
-        file.id = FileId(i as u32);
-    }
+    finalize_files(&mut files);
 
     Ok(Diff {
         base: DiffBase::AgentRun {

@@ -84,7 +84,7 @@ pub fn run(args: Args, state_dir: PathBuf) -> anyhow::Result<()> {
     ratatui::restore();
 
     // Persist after restoring so any write error surfaces on the real terminal.
-    save_review(&state);
+    save_review(&mut state);
     result
 }
 
@@ -340,11 +340,13 @@ fn switch_session(
     }
 }
 
-fn save_review(state: &AppState) {
-    if state.review_dirty
-        && let Err(e) = config::save_review_state(&state.state_path, &state.review)
-    {
-        tracing::warn!(error = %e, "failed to save review state");
+fn save_review(state: &mut AppState) {
+    state.prune_review();
+    if state.review_dirty {
+        match config::save_review_state(&state.state_path, &state.review) {
+            Ok(()) => state.review_dirty = false,
+            Err(e) => tracing::warn!(error = %e, "failed to save review state"),
+        }
     }
 }
 

@@ -4,9 +4,7 @@
 //! the persisted review-state file and the config (keymap/theme) loader here.
 
 use std::collections::HashMap;
-use std::collections::hash_map::DefaultHasher;
 use std::fs;
-use std::hash::{Hash, Hasher};
 use std::path::{Path, PathBuf};
 
 use directories::ProjectDirs;
@@ -38,10 +36,10 @@ pub fn paths() -> Result<Paths> {
 /// Path to the persisted review state for a given repo + diff base. Keyed by a
 /// hash of the absolute repo path so unrelated repos never collide, and tagged
 /// by base so a future per-run review doesn't clobber the working-tree one.
+/// The hash must be stable across builds (it names files on disk), hence the
+/// shared FNV fingerprint rather than `DefaultHasher`.
 pub fn review_state_path(state_dir: &Path, repo_workdir: &Path, base: &DiffBase) -> PathBuf {
-    let mut hasher = DefaultHasher::new();
-    repo_workdir.hash(&mut hasher);
-    let repo_hash = hasher.finish();
+    let repo_hash = crate::domain::ids::fingerprint(repo_workdir, &[]);
     let file = format!("{repo_hash:016x}-{}.toml", base_tag(base));
     state_dir.join("reviews").join(file)
 }
@@ -50,9 +48,26 @@ fn base_tag(base: &DiffBase) -> String {
     match base {
         DiffBase::WorkingTreeVsHead => "worktree-head".into(),
         DiffBase::WorkingTreeVsIndex => "worktree-index".into(),
-        DiffBase::Range { from, to } => format!("range-{from}-{to}"),
-        DiffBase::AgentRun { session, run } => format!("run-{}-{}", session.0, run.0),
+        // Revspecs (`origin/main..HEAD`) and session ids are user/agent input;
+        // they must not smuggle separators into the file name.
+        DiffBase::Range { from, to } => format!("range-{}-{}", sanitize(from), sanitize(to)),
+        DiffBase::AgentRun { session, run } => {
+            format!("run-{}-{}", sanitize(&session.0), run.0)
+        }
     }
+}
+
+/// Make an arbitrary revspec/id safe as a file-name component.
+fn sanitize(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | '-') {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect()
 }
 
 /// Load persisted review state, or a default when the file is missing or
