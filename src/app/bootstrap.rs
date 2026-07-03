@@ -203,7 +203,43 @@ fn summarize(ctx: &SessionContext, base: &DiffBase) -> SessionSummary {
             .map(|r| r.commands.clone())
             .unwrap_or_default(),
         verify_stale: ctx.selected().is_some_and(verification_stale),
+        runs: run_items(ctx),
     }
+}
+
+/// The session's runs for the run picker, oldest-first (matching run numbers).
+fn run_items(ctx: &SessionContext) -> Vec<super::state::RunListItem> {
+    ctx.session
+        .runs
+        .iter()
+        .map(|run| {
+            let files = run.snapshot.len();
+            let when = format_time(run.started);
+            let snapshot = if files == 0 {
+                " · no snapshot (falls back to worktree diff)".to_string()
+            } else {
+                format!(" · {files} file{}", if files == 1 { "" } else { "s" })
+            };
+            super::state::RunListItem {
+                index: run.id.0,
+                label: format!("{}{when}{snapshot}", mode_label(run.mode)),
+                is_current: ctx.selected_run == Some(run.id),
+            }
+        })
+        .collect()
+}
+
+/// `" · 12:34"`-style start time, empty when the run has no timestamp.
+fn format_time(ts: crate::domain::Timestamp) -> String {
+    if ts.0 == 0 {
+        return String::new();
+    }
+    jiff::Timestamp::from_millisecond(ts.0)
+        .map(|t| {
+            let zoned = t.to_zoned(jiff::tz::TimeZone::system());
+            format!(" · {}", zoned.strftime("%H:%M"))
+        })
+        .unwrap_or_default()
 }
 
 /// Whether the run's verification evidence predates its final edits: a ✓ badge

@@ -35,6 +35,19 @@ pub struct SessionSummary {
     /// The run's last verification command ran *before* its last edit — the ✓
     /// may not reflect the state being reviewed.
     pub verify_stale: bool,
+    /// All runs in the loaded session, for the run picker (`r`).
+    pub runs: Vec<RunListItem>,
+}
+
+/// One row in the run picker.
+#[derive(Debug, Clone)]
+pub struct RunListItem {
+    /// 0-based run index — what `--run` takes and re-scoping targets.
+    pub index: u32,
+    /// Precomputed display label: mode, when it started, what it touched.
+    pub label: String,
+    /// The run the current diff is scoped to.
+    pub is_current: bool,
 }
 
 /// In-progress per-hunk note edit (a tiny modal input).
@@ -121,6 +134,11 @@ pub struct AppState {
     pub picker_cursor: usize,
     /// Set when the user selects a different session; the run loop reloads it.
     pub pending_switch: Option<String>,
+    /// Run picker (`r`): choose a different run within the loaded session.
+    pub show_run_picker: bool,
+    pub run_picker_cursor: usize,
+    /// Set when the user selects a different run; the run loop re-scopes to it.
+    pub pending_run_switch: Option<u32>,
 
     // --- Live re-diff & notes (Phase 3) ---
     /// Bumps on each re-diff request; a `DiffReady` with a stale generation is
@@ -167,6 +185,9 @@ impl AppState {
             show_picker: false,
             picker_cursor: 0,
             pending_switch: None,
+            show_run_picker: false,
+            run_picker_cursor: 0,
+            pending_run_switch: None,
             generation: 0,
             note_edit: None,
             search_edit: None,

@@ -227,6 +227,16 @@ fn event_loop(
             *highlighter = Highlighter::with_theme(&syntax_theme);
             _watch = spawn_watch(state, &dirs, repo.workdir(), tx.clone());
         }
+
+        // `r` picker: re-scope the review to a different run of this session.
+        if let Some(run) = state.pending_run_switch.take() {
+            let mut new_selectors = selectors.clone();
+            new_selectors.run_index = Some(run);
+            rebuild(state, repo, state_dir, &dirs, &mut selectors, new_selectors);
+            state.keymap = keymap.clone();
+            *highlighter = Highlighter::with_theme(&syntax_theme);
+            _watch = spawn_watch(state, &dirs, repo.workdir(), tx.clone());
+        }
     }
     Ok(())
 }
@@ -322,27 +332,40 @@ fn switch_session(
     selectors: &mut Selectors,
     session_id: String,
 ) {
-    final_save(state);
     let new_selectors = Selectors {
         provider: selectors.provider,
         no_session: false,
-        session_id: Some(session_id.clone()),
+        session_id: Some(session_id),
         run_index: None,
         range: None,
         staged: false,
     };
+    rebuild(state, repo, state_dir, dirs, selectors, new_selectors);
+}
+
+/// Rebuild the whole `AppState` for new selectors (session or run switch),
+/// persisting the outgoing checklist first. On failure both the old state and
+/// the old selectors are kept, so future re-diffs still target what was
+/// actually loaded.
+fn rebuild(
+    state: &mut AppState,
+    repo: &Repo,
+    state_dir: &Path,
+    dirs: &AgentDirs,
+    selectors: &mut Selectors,
+    new_selectors: Selectors,
+) {
+    final_save(state);
     match app::build_state(repo, state_dir, dirs, &new_selectors) {
         Ok(mut new_state) => {
             // Carry the generation forward past any in-flight worker result for
-            // the *old* session — resetting to 0 would let a stale bundle match
-            // a post-switch request and clobber the new session's diff.
+            // the *old* selectors — resetting to 0 would let a stale bundle
+            // match a post-switch request and clobber the new state's diff.
             new_state.generation = state.generation + 1;
             *selectors = new_selectors;
             *state = new_state;
         }
-        // On failure keep both the old state and the old selectors, so future
-        // re-diffs still target the session that was actually loaded.
-        Err(e) => tracing::warn!(error = %e, session = session_id, "failed to switch session"),
+        Err(e) => tracing::warn!(error = %e, ?new_selectors, "failed to rebuild review state"),
     }
 }
 
@@ -386,6 +409,8 @@ fn render(frame: &mut Frame, state: &AppState, highlighter: &mut Highlighter) {
         widgets::search::render(frame, frame.area(), state);
     } else if state.show_picker {
         widgets::session_picker::render(frame, frame.area(), state);
+    } else if state.show_run_picker {
+        widgets::run_picker::render(frame, frame.area(), state);
     } else if state.show_verify {
         widgets::verification::render(frame, frame.area(), state);
     } else if state.show_help {
@@ -600,6 +625,7 @@ mod tests {
             live: true,
             commands: sample_commands(),
             verify_stale: false,
+            runs: Vec::new(),
         });
         state.intent.insert(
             PathBuf::from("src/main.rs"),
@@ -627,6 +653,7 @@ mod tests {
             live: false,
             commands: sample_commands(),
             verify_stale: false,
+            runs: Vec::new(),
         });
         state.show_verify = true;
         insta::assert_snapshot!(render_to_string(&state));
@@ -682,6 +709,31 @@ mod tests {
             },
         ];
         state.show_picker = true;
+        insta::assert_snapshot!(render_to_string(&state));
+    }
+
+    #[test]
+    fn renders_run_picker() {
+        use crate::app::RunListItem;
+
+        let mut state = sample_state();
+        state.session = Some(crate::app::state::SessionSummary {
+            runs: vec![
+                RunListItem {
+                    index: 0,
+                    label: "acceptEdits · 09:15 · 3 files".into(),
+                    is_current: false,
+                },
+                RunListItem {
+                    index: 1,
+                    label: "auto · 10:40 · 7 files".into(),
+                    is_current: true,
+                },
+            ],
+            ..Default::default()
+        });
+        state.show_run_picker = true;
+        state.run_picker_cursor = 1;
         insta::assert_snapshot!(render_to_string(&state));
     }
 }

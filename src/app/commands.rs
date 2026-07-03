@@ -30,6 +30,8 @@ pub enum Command {
 
     // Session (Phase 2).
     OpenSessionPicker,
+    /// Choose a different run within the loaded session.
+    OpenRunPicker,
     ToggleIntentDetail,
     Select,
 

@@ -515,6 +515,7 @@ mod tests {
                 },
             ],
             verify_stale: false,
+            runs: Vec::new(),
         });
         state
     }

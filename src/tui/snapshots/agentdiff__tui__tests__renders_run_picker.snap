@@ -1,0 +1,24 @@
+---
+source: src/tui/mod.rs
+expression: render_to_string(&state)
+---
+"┌ Files ─────────────┐┌ Diff — working tree vs HEAD (1 fi┐┌ Intent ────────────┐"
+"│▾ M src/main.rs  +1 ││▾ M src/main.rs  +1 -1            ││(untitled session)  │"
+"│                    ││  @@ -1,2 +1,2 @@ fn main()       ││Claude Code         │"
+"│                    ││  1   fn main() {                 ││                    │"
+"│                    ││  2 -     let x = 1;              ││src/main.rs         │"
+"│                    ││  2 +     let x = 2;              ││(no recorded intent │"
+"│                    ││                                  ││for this file)      │"
+"│       ┌ Agent runs (this session) ───────────────────────────────────┐       │"
+"│       │    run 1  acceptEdits · 09:15 · 3 files                      │       │"
+"│       │▶ * run 2  auto · 10:40 · 7 files                             │       │"
+"│       │                                                              │       │"
+"│       │  Enter: review this run    Esc: close                        │       │"
+"│       └──────────────────────────────────────────────────────────────┘       │"
+"│                    ││                                  ││                    │"
+"│                    ││                                  ││                    │"
+"│                    ││                                  ││                    │"
+"│                    ││                                  ││                    │"
+"│                    ││                                  ││                    │"
+"└────────────────────┘└──────────────────────────────────┘└────────────────────┘"
+" agentdiff   working tree   reviewed 0/1    a approve  x flag  n note  ? help  q"

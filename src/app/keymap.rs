@@ -85,6 +85,7 @@ impl Keymap {
             KeyCode::Char('u') => Command::Unset,
 
             KeyCode::Char('s') => Command::OpenSessionPicker,
+            KeyCode::Char('r') => Command::OpenRunPicker,
             KeyCode::Char('i') => Command::ToggleIntentDetail,
             KeyCode::Char('v') => Command::ToggleVerification,
             KeyCode::Char('n') => Command::EditNote,
@@ -125,6 +126,7 @@ fn command_from_name(name: &str) -> Option<Command> {
         "needs_attention" => Command::NeedsAttention,
         "unset" => Command::Unset,
         "session_picker" => Command::OpenSessionPicker,
+        "run_picker" => Command::OpenRunPicker,
         "intent_detail" => Command::ToggleIntentDetail,
         "verification" => Command::ToggleVerification,
         "edit_note" => Command::EditNote,
