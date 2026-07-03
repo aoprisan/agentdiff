@@ -32,6 +32,22 @@ pub struct SessionSummary {
     /// Shell commands the selected run ran, for the verification badge/overlay.
     /// Empty under the git-only fallback or for a run that ran nothing.
     pub commands: Vec<CommandRun>,
+    /// The run's last verification command ran *before* its last edit — the ✓
+    /// may not reflect the state being reviewed.
+    pub verify_stale: bool,
+    /// All runs in the loaded session, for the run picker (`r`).
+    pub runs: Vec<RunListItem>,
+}
+
+/// One row in the run picker.
+#[derive(Debug, Clone)]
+pub struct RunListItem {
+    /// 0-based run index — what `--run` takes and re-scoping targets.
+    pub index: u32,
+    /// Precomputed display label: mode, when it started, what it touched.
+    pub label: String,
+    /// The run the current diff is scoped to.
+    pub is_current: bool,
 }
 
 /// In-progress per-hunk note edit (a tiny modal input).
@@ -118,6 +134,11 @@ pub struct AppState {
     pub picker_cursor: usize,
     /// Set when the user selects a different session; the run loop reloads it.
     pub pending_switch: Option<String>,
+    /// Run picker (`r`): choose a different run within the loaded session.
+    pub show_run_picker: bool,
+    pub run_picker_cursor: usize,
+    /// Set when the user selects a different run; the run loop re-scopes to it.
+    pub pending_run_switch: Option<u32>,
 
     // --- Live re-diff & notes (Phase 3) ---
     /// Bumps on each re-diff request; a `DiffReady` with a stale generation is
@@ -164,6 +185,9 @@ impl AppState {
             show_picker: false,
             picker_cursor: 0,
             pending_switch: None,
+            show_run_picker: false,
+            run_picker_cursor: 0,
+            pending_run_switch: None,
             generation: 0,
             note_edit: None,
             search_edit: None,
@@ -331,15 +355,34 @@ impl AppState {
                 }
             }
         }
-        // A recorded verdict whose fingerprint is gone means the hunk's content
-        // changed since the human reviewed it.
+        // A recorded verdict whose fingerprint is gone — while its file still
+        // has changes in the diff — means the hunk's content changed since the
+        // human reviewed it. A verdict for a file that left the diff entirely
+        // is a *resolved* review (committed/reverted), not a changed one; those
+        // are pruned on save, not flagged forever.
+        let files_present: HashSet<&std::path::Path> =
+            self.diff.files.iter().map(|f| f.path.as_path()).collect();
         counts.changed_since_reviewed = self
             .review
             .verdicts
             .keys()
-            .filter(|href| !present.contains(href))
+            .filter(|href| !present.contains(href) && files_present.contains(href.path.as_path()))
             .count();
         counts
+    }
+
+    /// Garbage-collect verdicts/notes for files that have left the diff. Hunks
+    /// that merely changed content keep their entries (that's the "changed
+    /// since reviewed" signal); called at save time so transient mid-rewrite
+    /// states aren't pruned on every re-diff.
+    pub fn prune_review(&mut self) {
+        let files: HashSet<std::path::PathBuf> =
+            self.diff.files.iter().map(|f| f.path.clone()).collect();
+        let before = self.review.verdicts.len() + self.review.notes.len();
+        self.review.retain_refs(|href| files.contains(&href.path));
+        if self.review.verdicts.len() + self.review.notes.len() != before {
+            self.review_dirty = true;
+        }
     }
 }
 
@@ -391,6 +434,7 @@ mod tests {
                 change: ChangeKind::Modified,
                 is_binary: false,
                 is_created: false,
+                base_fallback: false,
                 language: Some("rust".into()),
                 hunks,
                 stats: (0, 0),
@@ -428,6 +472,41 @@ mod tests {
         assert_eq!(state.current_hunk_ref(), Some(h2.href.clone()));
         assert_eq!(state.review.verdict(&h2.href), HunkVerdict::Approved);
         assert_eq!(state.counts().reviewed, 1);
+    }
+
+    #[test]
+    fn changed_count_and_pruning_distinguish_edited_from_departed() {
+        let h1 = hunk("a.rs", 11, "first");
+        let mut state = AppState::new(
+            diff_with(vec![h1.clone()]),
+            ReviewState::default(),
+            PathBuf::from("/tmp/r.toml"),
+        );
+        state.viewport_height = 100;
+        state.review.set_verdict(h1.href.clone(), HunkVerdict::Approved);
+        // A verdict for a hunk in a file that left the diff (committed).
+        let departed = HunkRef {
+            path: "gone.rs".into(),
+            fingerprint: 77,
+        };
+        state.review.set_verdict(departed.clone(), HunkVerdict::Approved);
+        // A verdict whose hunk content changed but whose file is still here.
+        let edited = HunkRef {
+            path: "a.rs".into(),
+            fingerprint: 55,
+        };
+        state.review.set_verdict(edited.clone(), HunkVerdict::Approved);
+
+        // Only the still-present file's missing fingerprint counts as changed;
+        // the committed file does not show up as "changed" forever.
+        assert_eq!(state.counts().changed_since_reviewed, 1);
+
+        // Pruning drops the departed file's entry, keeps the changed one.
+        state.prune_review();
+        assert!(!state.review.verdicts.contains_key(&departed));
+        assert!(state.review.verdicts.contains_key(&edited));
+        assert!(state.review.verdicts.contains_key(&h1.href));
+        assert!(state.review_dirty, "a prune must mark state for saving");
     }
 
     #[test]

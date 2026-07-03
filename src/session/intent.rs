@@ -20,6 +20,7 @@ use crate::domain::diff::{Diff, LineKind};
 use crate::domain::review::HunkRef;
 use crate::domain::session::Intent;
 
+use super::paths::RepoPaths;
 use super::transcript::{Record, edit_tool};
 
 /// Repo-relative path → recovered intent (per-file fallback).
@@ -52,11 +53,24 @@ pub fn build(records: &[Record], repo_root: &Path) -> IntentMap {
     map
 }
 
-/// Every in-repo edit with recoverable intent, in transcript order.
+/// Every in-repo edit with recoverable intent, in transcript order. Edits whose
+/// `tool_result` errored (old_string not found, rejected write) never touched
+/// the tree — including them would let a failed attempt claim a hunk's "why",
+/// or worse, out-score the retry that actually landed.
 pub fn edit_intents(records: &[Record], repo_root: &Path) -> Vec<EditIntent> {
+    let paths = RepoPaths::new(repo_root);
     let by_uuid: HashMap<&str, &Record> = records
         .iter()
         .filter_map(|r| Some((r.as_entry()?.uuid.as_deref()?, r)))
+        .collect();
+    let failed: HashSet<&str> = records
+        .iter()
+        .filter_map(|r| r.as_entry())
+        .flat_map(|e| e.blocks())
+        .filter_map(|b| {
+            let (id, _, is_error) = b.as_tool_result()?;
+            (is_error == Some(true)).then_some(id?)
+        })
         .collect();
 
     let mut edits = Vec::new();
@@ -67,14 +81,20 @@ pub fn edit_intents(records: &[Record], repo_root: &Path) -> Vec<EditIntent> {
         let Some(entry) = record.as_entry() else {
             continue;
         };
-        for (name, input) in entry.blocks().iter().filter_map(|b| b.as_tool_use()) {
+        for block in entry.blocks() {
+            let Some((name, input)) = block.as_tool_use() else {
+                continue;
+            };
             if edit_tool(name).is_none() {
                 continue;
+            }
+            if block.tool_use_id().is_some_and(|id| failed.contains(id)) {
+                continue; // the edit was rejected; it produced no hunk
             }
             let Some(path_str) = input.get("file_path").and_then(|v| v.as_str()) else {
                 continue;
             };
-            let Some(rel) = relativize(path_str, repo_root) else {
+            let Some(rel) = paths.relativize(path_str) else {
                 continue; // edit outside the repo
             };
             if let Some((text, source_uuid, hops)) = walk_to_intent(record, &by_uuid) {
@@ -206,19 +226,6 @@ fn confidence(hops: usize) -> f32 {
     (1.0 - 0.1 * hops as f32).clamp(0.3, 1.0)
 }
 
-fn relativize(path_str: &str, repo_root: &Path) -> Option<PathBuf> {
-    let p = Path::new(path_str);
-    let abs = if p.is_absolute() {
-        p.to_path_buf()
-    } else {
-        repo_root.join(p)
-    };
-    abs.strip_prefix(repo_root)
-        .ok()
-        .filter(|r| !r.as_os_str().is_empty())
-        .map(Path::to_path_buf)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,6 +260,26 @@ mod tests {
         let intent = map.get(Path::new("a.rs")).unwrap();
         assert_eq!(intent.text, "Fixing the bug.");
         assert!((intent.confidence - 1.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn failed_edits_are_excluded_from_intent() {
+        // The first Edit errored (old_string not found); the retry landed. Only
+        // the retry may contribute intent/content.
+        let jsonl = r#"
+{"type":"assistant","uuid":"a1","message":{"content":[{"type":"text","text":"First try."},{"type":"tool_use","id":"e1","name":"Edit","input":{"file_path":"/repo/a.rs","new_string":"let attempt = 1;"}}]}}
+{"type":"user","uuid":"r1","parentUuid":"a1","message":{"content":[{"type":"tool_result","tool_use_id":"e1","content":"old_string not found","is_error":true}]}}
+{"type":"assistant","uuid":"a2","parentUuid":"r1","message":{"content":[{"type":"text","text":"Retry with the right anchor."},{"type":"tool_use","id":"e2","name":"Edit","input":{"file_path":"/repo/a.rs","new_string":"let attempt = 2;"}}]}}
+{"type":"user","uuid":"r2","parentUuid":"a2","message":{"content":[{"type":"tool_result","tool_use_id":"e2","content":"ok","is_error":false}]}}
+"#;
+        let records = parse_reader(jsonl.trim().as_bytes());
+        let edits = edit_intents(&records, Path::new("/repo"));
+        assert_eq!(edits.len(), 1, "the rejected edit contributes nothing");
+        assert_eq!(edits[0].intent.text, "Retry with the right anchor.");
+
+        // The per-file map gets the successful edit's intent too.
+        let map = build(&records, Path::new("/repo"));
+        assert_eq!(map[Path::new("a.rs")].text, "Retry with the right anchor.");
     }
 
     // --- hunk-level correlation ---------------------------------------------
@@ -301,6 +328,7 @@ mod tests {
                 change: ChangeKind::Modified,
                 is_binary: false,
                 is_created: false,
+                base_fallback: false,
                 language: None,
                 hunks,
                 stats: (0, 0),

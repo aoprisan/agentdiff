@@ -108,6 +108,7 @@ pub fn segment(events: &[RawEvent]) -> Segmentation {
         }
 
         if let Some((name, args)) = event.tool_start() {
+            let ts = event.timestamp.as_deref().and_then(parse_timestamp);
             if let Some(tool) = edit_tool(name)
                 && let Some(path) = edit_path(args)
             {
@@ -116,12 +117,12 @@ pub fn segment(events: &[RawEvent]) -> Segmentation {
                     tool,
                     message_uuid: event.id.clone().unwrap_or_default(),
                     parent_uuid: event.parent_id.clone(),
+                    timestamp: ts,
                 });
             }
             if name == "bash"
                 && let Some(command) = args.get("command").and_then(|v| v.as_str())
             {
-                let ts = event.timestamp.as_deref().and_then(parse_timestamp);
                 run.push_command(
                     CommandRun {
                         command: command.to_string(),

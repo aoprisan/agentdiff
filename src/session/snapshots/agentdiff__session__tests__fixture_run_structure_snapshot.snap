@@ -24,19 +24,22 @@ expression: agent_runs
         "file_path": "/repo/src/greet.rs",
         "tool": "Write",
         "message_uuid": "a1",
-        "parent_uuid": "u2"
+        "parent_uuid": "u2",
+        "timestamp": 1769940035000
       },
       {
         "file_path": "/repo/src/lib.rs",
         "tool": "Edit",
         "message_uuid": "a2",
-        "parent_uuid": "r1"
+        "parent_uuid": "r1",
+        "timestamp": 1769940045000
       },
       {
         "file_path": "/outside/thing.rs",
         "tool": "Edit",
         "message_uuid": "a3",
-        "parent_uuid": "a2"
+        "parent_uuid": "a2",
+        "timestamp": 1769940050000
       }
     ],
     "commands": [

@@ -14,5 +14,5 @@ pub use bootstrap::{Selectors, build_bundle, build_state};
 pub use event::AppEvent;
 pub use keymap::Keymap;
 pub use rows::Row;
-pub use state::{AppState, SessionListItem, View, file_collapsed};
+pub use state::{AppState, RunListItem, SessionListItem, View, file_collapsed};
 pub use update::update;

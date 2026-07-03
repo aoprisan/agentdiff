@@ -191,14 +191,87 @@ fn summarize(ctx: &SessionContext, base: &DiffBase) -> SessionSummary {
         title: ctx.session.title.clone(),
         last_prompt: ctx.session.last_prompt.clone(),
         base_label,
-        // A run that never closed (no following non-autonomous turn) is still running.
-        live: ctx.selected().is_some_and(|r| r.ended.is_none()),
+        // A run that never closed (no following non-autonomous turn) reads as
+        // still running — but quitting the agent mid-acceptEdits leaves the
+        // span open forever, so "live" additionally requires the transcript to
+        // have been written to recently.
+        live: ctx.selected().is_some_and(|r| r.ended.is_none())
+            && recently_modified(&ctx.session.file),
         // The commands the selected run ran, for the verification badge/overlay.
         commands: ctx
             .selected()
             .map(|r| r.commands.clone())
             .unwrap_or_default(),
+        verify_stale: ctx.selected().is_some_and(verification_stale),
+        runs: run_items(ctx),
     }
+}
+
+/// The session's runs for the run picker, oldest-first (matching run numbers).
+fn run_items(ctx: &SessionContext) -> Vec<super::state::RunListItem> {
+    ctx.session
+        .runs
+        .iter()
+        .map(|run| {
+            let files = run.snapshot.len();
+            let when = format_time(run.started);
+            let snapshot = if files == 0 {
+                " · no snapshot (falls back to worktree diff)".to_string()
+            } else {
+                format!(" · {files} file{}", if files == 1 { "" } else { "s" })
+            };
+            super::state::RunListItem {
+                index: run.id.0,
+                label: format!("{}{when}{snapshot}", mode_label(run.mode)),
+                is_current: ctx.selected_run == Some(run.id),
+            }
+        })
+        .collect()
+}
+
+/// `" · 12:34"`-style start time, empty when the run has no timestamp.
+fn format_time(ts: crate::domain::Timestamp) -> String {
+    if ts.0 == 0 {
+        return String::new();
+    }
+    jiff::Timestamp::from_millisecond(ts.0)
+        .map(|t| {
+            let zoned = t.to_zoned(jiff::tz::TimeZone::system());
+            format!(" · {}", zoned.strftime("%H:%M"))
+        })
+        .unwrap_or_default()
+}
+
+/// Whether the run's verification evidence predates its final edits: a ✓ badge
+/// from a `cargo test` that ran *before* the last three edits proves nothing
+/// about the state under review. Timestamps must exist on both sides to claim
+/// staleness — missing data never cries wolf.
+fn verification_stale(run: &crate::domain::session::AgentRun) -> bool {
+    use crate::domain::session::CommandKind;
+    let last_edit = run.edits.iter().filter_map(|e| Some(e.timestamp?.0)).max();
+    let last_verify = run
+        .commands
+        .iter()
+        .filter(|c| {
+            matches!(
+                c.kind,
+                CommandKind::Test | CommandKind::Build | CommandKind::Lint | CommandKind::Format
+            )
+        })
+        .filter_map(|c| Some(c.timestamp?.0))
+        .max();
+    matches!((last_edit, last_verify), (Some(edit), Some(verify)) if verify < edit)
+}
+
+/// How stale a transcript may be while its open run still counts as live.
+const LIVE_STALENESS: std::time::Duration = std::time::Duration::from_secs(300);
+
+fn recently_modified(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .map(|t| t.elapsed().map_or(true, |age| age < LIVE_STALENESS))
+        .unwrap_or(false)
 }
 
 fn mode_label(mode: PermissionMode) -> &'static str {
@@ -227,12 +300,12 @@ fn session_items(
             locate::list_sessions(dir, cwd)
                 .into_iter()
                 .map(|entry| {
-                    let label = locate::peek_label(&entry.path);
+                    let meta = locate::peek_meta(&entry.path);
                     SessionListItem {
                         is_current: current_id == Some(entry.id.0.as_str()),
                         id: entry.id.0,
-                        title: label.title,
-                        last_prompt: label.last_prompt,
+                        title: meta.title,
+                        last_prompt: meta.last_prompt,
                     }
                 })
                 .collect()
@@ -251,5 +324,53 @@ fn session_items(
                 })
                 .collect()
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::domain::Timestamp;
+    use crate::domain::session::{
+        AgentRun, CommandKind, CommandOutcome, CommandRun, EditTool, RunId, ToolEditEvent,
+    };
+    use std::collections::HashMap;
+
+    fn run_with(edit_ts: Option<i64>, verify_ts: Option<i64>) -> AgentRun {
+        AgentRun {
+            id: RunId(0),
+            mode: PermissionMode::AcceptEdits,
+            started: Timestamp(0),
+            ended: None,
+            snapshot: HashMap::new(),
+            base_commit: None,
+            edits: vec![ToolEditEvent {
+                file_path: "a.rs".into(),
+                tool: EditTool::Edit,
+                message_uuid: "m".into(),
+                parent_uuid: None,
+                timestamp: edit_ts.map(Timestamp),
+            }],
+            commands: vec![CommandRun {
+                command: "cargo test".into(),
+                description: None,
+                kind: CommandKind::Test,
+                outcome: CommandOutcome::Ok,
+                output_excerpt: String::new(),
+                message_uuid: "c".into(),
+                timestamp: verify_ts.map(Timestamp),
+            }],
+        }
+    }
+
+    #[test]
+    fn verification_is_stale_only_when_edits_postdate_the_last_check() {
+        // Test ran after the last edit → fresh.
+        assert!(!verification_stale(&run_with(Some(10), Some(20))));
+        // Edits landed after the last test → stale.
+        assert!(verification_stale(&run_with(Some(30), Some(20))));
+        // Missing timestamps on either side must not cry wolf.
+        assert!(!verification_stale(&run_with(None, Some(20))));
+        assert!(!verification_stale(&run_with(Some(30), None)));
     }
 }

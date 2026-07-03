@@ -28,6 +28,7 @@ pub fn render(frame: &mut Frame, area: Rect) {
         Line::from("  e            open file in $EDITOR at hunk"),
         Line::from("  n            add / edit note"),
         Line::from("  s            session picker"),
+        Line::from("  r            run picker (this session)"),
         Line::from("  i            toggle intent detail"),
         Line::from("  v            what the agent ran (verify)"),
         Line::from(""),

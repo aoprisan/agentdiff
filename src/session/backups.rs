@@ -12,6 +12,7 @@ use std::path::{Path, PathBuf};
 
 use crate::domain::session::Backup;
 
+use super::paths::RepoPaths;
 use super::transcript::TrackedBackup;
 
 /// Resolve raw per-path backups to a repo-relative pre-run map.
@@ -23,21 +24,18 @@ pub fn resolve(
     file_history_dir: &Path,
     repo_root: &Path,
 ) -> HashMap<PathBuf, Backup> {
+    let paths = RepoPaths::new(repo_root);
     let mut out = HashMap::new();
     for (key, tracked) in raw {
-        let abs = to_absolute(key, repo_root);
-        let Ok(rel) = abs.strip_prefix(repo_root) else {
+        let Some(rel) = paths.relativize(key) else {
             continue; // out-of-repo entry → drop
         };
-        if rel.as_os_str().is_empty() {
-            continue;
-        }
         let backup_path = tracked
             .backup_file_name
             .as_ref()
             .map(|name| file_history_dir.join(name));
         out.insert(
-            rel.to_path_buf(),
+            rel,
             Backup {
                 backup_path,
                 version: tracked.version,
@@ -45,15 +43,6 @@ pub fn resolve(
         );
     }
     out
-}
-
-fn to_absolute(key: &str, repo_root: &Path) -> PathBuf {
-    let p = Path::new(key);
-    if p.is_absolute() {
-        p.to_path_buf()
-    } else {
-        repo_root.join(p)
-    }
 }
 
 #[cfg(test)]

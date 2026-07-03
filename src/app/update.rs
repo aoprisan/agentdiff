@@ -76,9 +76,13 @@ fn commit_note(state: &mut AppState) {
 }
 
 fn apply(state: &mut AppState, command: Command) {
-    // The session picker is a modal overlay that captures navigation.
+    // The pickers are modal overlays that capture navigation.
     if state.show_picker {
         apply_picker(state, command);
+        return;
+    }
+    if state.show_run_picker {
+        apply_run_picker(state, command);
         return;
     }
 
@@ -93,6 +97,7 @@ fn apply(state: &mut AppState, command: Command) {
         }
 
         Command::OpenSessionPicker => open_picker(state),
+        Command::OpenRunPicker => open_run_picker(state),
         Command::ToggleIntentDetail => state.intent_detail = !state.intent_detail,
         Command::ToggleVerification => toggle_verification(state),
         Command::Select => {}
@@ -341,6 +346,47 @@ fn open_picker(state: &mut AppState) {
         .unwrap_or(0);
 }
 
+fn open_run_picker(state: &mut AppState) {
+    let runs = state.session.as_ref().map(|s| s.runs.len()).unwrap_or(0);
+    if runs < 2 {
+        return; // nothing to pick between
+    }
+    state.show_help = false;
+    state.show_run_picker = true;
+    state.run_picker_cursor = state
+        .session
+        .as_ref()
+        .and_then(|s| s.runs.iter().position(|r| r.is_current))
+        .unwrap_or(0);
+}
+
+/// Command routing while the run picker is open.
+fn apply_run_picker(state: &mut AppState, command: Command) {
+    let last = state
+        .session
+        .as_ref()
+        .map(|s| s.runs.len().saturating_sub(1))
+        .unwrap_or(0);
+    match command {
+        Command::Quit => state.should_quit = true,
+        Command::CursorDown => state.run_picker_cursor = (state.run_picker_cursor + 1).min(last),
+        Command::CursorUp => state.run_picker_cursor = state.run_picker_cursor.saturating_sub(1),
+        Command::CloseOverlay | Command::OpenRunPicker => state.show_run_picker = false,
+        Command::Select => {
+            if let Some(item) = state
+                .session
+                .as_ref()
+                .and_then(|s| s.runs.get(state.run_picker_cursor))
+                && !item.is_current
+            {
+                state.pending_run_switch = Some(item.index);
+            }
+            state.show_run_picker = false;
+        }
+        _ => {}
+    }
+}
+
 /// Command routing while the session picker is open.
 fn apply_picker(state: &mut AppState, command: Command) {
     let last = state.sessions.len().saturating_sub(1);
@@ -403,6 +449,7 @@ mod tests {
                 change: ChangeKind::Modified,
                 is_binary: false,
                 is_created: false,
+                base_fallback: false,
                 language: None,
                 hunks: vec![hunk(1), hunk(2), hunk(3)],
                 stats: (3, 0),
@@ -586,5 +633,35 @@ mod tests {
         state.cursor = 3;
         apply(&mut state, Command::NextUnreviewed);
         assert_eq!(state.cursor, 3);
+    }
+
+    #[test]
+    fn run_picker_selects_a_different_run() {
+        use crate::app::state::{RunListItem, SessionSummary};
+
+        let mut state = three_hunk_state();
+        state.session = Some(SessionSummary {
+            runs: vec![
+                RunListItem { index: 0, label: "auto".into(), is_current: true },
+                RunListItem { index: 1, label: "acceptEdits".into(), is_current: false },
+            ],
+            ..Default::default()
+        });
+
+        apply(&mut state, Command::OpenRunPicker);
+        assert!(state.show_run_picker);
+        assert_eq!(state.run_picker_cursor, 0, "opens on the current run");
+
+        apply(&mut state, Command::CursorDown);
+        apply(&mut state, Command::Select);
+        assert_eq!(state.pending_run_switch, Some(1));
+        assert!(!state.show_run_picker);
+
+        // Selecting the current run is a no-op.
+        state.pending_run_switch = None;
+        apply(&mut state, Command::OpenRunPicker);
+        apply(&mut state, Command::CursorUp);
+        apply(&mut state, Command::Select);
+        assert_eq!(state.pending_run_switch, None);
     }
 }

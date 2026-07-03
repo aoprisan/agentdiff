@@ -46,16 +46,24 @@ pub fn diff_worktree_vs_head(repo: &Repo) -> Result<Diff> {
     }
 
     files.extend(untracked::collect(repo)?);
-    files.sort_by(|a, b| a.path.cmp(&b.path));
-    for (i, file) in files.iter_mut().enumerate() {
-        file.id = FileId(i as u32);
-    }
+    finalize_files(&mut files);
 
     Ok(Diff {
         base: DiffBase::WorkingTreeVsHead,
         files,
         generated_at: Timestamp::now(),
     })
+}
+
+/// Shared assembly tail for every diff builder: stable file order, sequential
+/// ids, and per-file disambiguation of identical hunks (so each gets its own
+/// `HunkRef` and verdicts can't smear across repeated code).
+fn finalize_files(files: &mut [FileChange]) {
+    files.sort_by(|a, b| a.path.cmp(&b.path));
+    for (i, file) in files.iter_mut().enumerate() {
+        file.id = FileId(i as u32);
+        crate::domain::ids::disambiguate_duplicates(&mut file.hunks);
+    }
 }
 
 /// Build the staged diff (HEAD tree vs index) for `DiffBase::WorkingTreeVsIndex`.
@@ -106,10 +114,7 @@ fn collect_tree_diff(mut git_diff: git2::Diff<'_>, base: DiffBase) -> Result<Dif
             files.push(file);
         }
     }
-    files.sort_by(|a, b| a.path.cmp(&b.path));
-    for (i, file) in files.iter_mut().enumerate() {
-        file.id = FileId(i as u32);
-    }
+    finalize_files(&mut files);
     Ok(Diff {
         base,
         files,
@@ -163,6 +168,7 @@ fn file_change(git_diff: &git2::Diff<'_>, idx: usize) -> Result<Option<FileChang
         change,
         is_binary,
         is_created: change == ChangeKind::Added,
+        base_fallback: false,
         language: language_for(&path),
         hunks,
         stats,
@@ -227,13 +233,38 @@ pub fn diff_agent_run(repo: &Repo, session: &SessionId, run: &AgentRun) -> Resul
     let mut files = Vec::new();
 
     for (rel_path, backup) in &run.snapshot {
-        let pre = match &backup.backup_path {
-            Some(path) => read_lossy(path),
-            None => run
-                .base_commit
-                .as_deref()
-                .and_then(|rev| repo.blob_at(rev, rel_path))
-                .unwrap_or_default(),
+        // Resolve the pre-run content, tracking whether the intended base was
+        // actually available. A backup that has been GC'd from file-history or
+        // a base commit rebased away must not silently misrender a modified
+        // file as agent-created — fall back to HEAD and label the file.
+        let (pre, base_fallback) = match &backup.backup_path {
+            Some(path) => match std::fs::read(path) {
+                Ok(bytes) => (String::from_utf8_lossy(&bytes).into_owned(), false),
+                Err(err) => {
+                    tracing::warn!(
+                        path = %rel_path.display(), backup = %path.display(), %err,
+                        "pre-run backup unreadable; diffing against HEAD instead"
+                    );
+                    (repo.blob_at("HEAD", rel_path).unwrap_or_default(), true)
+                }
+            },
+            None => match run.base_commit.as_deref() {
+                // A missing blob in a *resolvable* base commit means the file
+                // didn't exist pre-run (agent-created). Only an unresolvable
+                // base commit (rebased or GC'd away) is a degraded base.
+                Some(rev) if repo.rev_exists(rev) => {
+                    (repo.blob_at(rev, rel_path).unwrap_or_default(), false)
+                }
+                Some(rev) => {
+                    tracing::warn!(
+                        path = %rel_path.display(), rev,
+                        "base commit unresolvable; diffing against HEAD instead"
+                    );
+                    (repo.blob_at("HEAD", rel_path).unwrap_or_default(), true)
+                }
+                // No backup and no base commit: an agent-created file.
+                None => (String::new(), false),
+            },
         };
         let current_path = workdir.join(rel_path);
         let current = read_lossy(&current_path);
@@ -246,11 +277,11 @@ pub fn diff_agent_run(repo: &Repo, session: &SessionId, run: &AgentRun) -> Resul
             continue;
         }
 
-        // Created when there's no pre-run content (no backup and no base blob),
-        // not merely when a backup file is absent — a Copilot file with a
-        // `base_commit` blob is a modification, not a creation.
-        let is_created = pre.is_empty();
-        let change = if pre.is_empty() {
+        // Created when there's genuinely no pre-run content (no backup and no
+        // base blob), not merely when the intended base couldn't be read — a
+        // degraded base means the file *did* pre-exist.
+        let is_created = pre.is_empty() && !base_fallback;
+        let change = if pre.is_empty() && !base_fallback {
             ChangeKind::Added
         } else if current.is_empty() {
             ChangeKind::Deleted
@@ -266,6 +297,7 @@ pub fn diff_agent_run(repo: &Repo, session: &SessionId, run: &AgentRun) -> Resul
                 change,
                 is_binary: true,
                 is_created,
+                base_fallback,
                 language: language_for(rel_path),
                 hunks: Vec::new(),
                 stats: (0, 0),
@@ -288,16 +320,14 @@ pub fn diff_agent_run(repo: &Repo, session: &SessionId, run: &AgentRun) -> Resul
             change,
             is_binary: false,
             is_created,
+            base_fallback,
             language: language_for(rel_path),
             hunks,
             stats,
         });
     }
 
-    files.sort_by(|a, b| a.path.cmp(&b.path));
-    for (i, file) in files.iter_mut().enumerate() {
-        file.id = FileId(i as u32);
-    }
+    finalize_files(&mut files);
 
     Ok(Diff {
         base: DiffBase::AgentRun {
@@ -767,6 +797,71 @@ mod tests {
         let greet = find(&diff, "src/greet.rs");
         assert_eq!(greet.change, ChangeKind::Added);
         assert!(greet.is_created);
+    }
+
+    /// A GC'd backup or an unresolvable base commit must not misrender a
+    /// modified file as agent-created: the differ falls back to HEAD for the
+    /// "before" side and labels the file as degraded (`base_fallback`).
+    #[test]
+    fn agent_run_diff_labels_missing_base_instead_of_faking_created() {
+        use crate::domain::Timestamp;
+        use crate::domain::session::{AgentRun, Backup, PermissionMode, RunId, SessionId};
+        use std::collections::HashMap;
+        use std::path::PathBuf;
+
+        // Commit the pre-edit content; the working tree holds the post-edit.
+        let dir = tempfile::tempdir().unwrap();
+        let repo = Repository::init(dir.path()).unwrap();
+        write(dir.path(), "src/lib.rs", b"fn f(n: usize) {\n    for _ in 0..=n {}\n}\n");
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("src/lib.rs")).unwrap();
+        index.write().unwrap();
+        let tree = repo.find_tree(index.write_tree().unwrap()).unwrap();
+        let sig = Signature::now("Test", "test@example.com").unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "base", &tree, &[]).unwrap();
+        write(dir.path(), "src/lib.rs", b"fn f(n: usize) {\n    for _ in 0..n {}\n}\n");
+
+        let run_with = |backup: Backup, base_commit: Option<String>| AgentRun {
+            id: RunId(0),
+            mode: PermissionMode::AcceptEdits,
+            started: Timestamp(0),
+            ended: None,
+            snapshot: HashMap::from([(PathBuf::from("src/lib.rs"), backup)]),
+            base_commit,
+            edits: Vec::new(),
+            commands: Vec::new(),
+        };
+        let repo = Repo::discover(dir.path()).unwrap();
+        let sid = SessionId("sid".into());
+
+        // Claude shape: the recorded backup file no longer exists.
+        let gone = dir.path().join("no-such-backup");
+        let diff = diff_agent_run(
+            &repo,
+            &sid,
+            &run_with(Backup { backup_path: Some(gone), version: 1 }, None),
+        )
+        .unwrap();
+        let lib = find(&diff, "src/lib.rs");
+        assert!(lib.base_fallback);
+        assert!(!lib.is_created);
+        assert_eq!(lib.change, ChangeKind::Modified);
+        assert!(!lib.hunks.is_empty(), "falls back to a HEAD-based diff");
+
+        // Copilot shape: the base commit was rebased/GC'd away.
+        let diff = diff_agent_run(
+            &repo,
+            &sid,
+            &run_with(
+                Backup { backup_path: None, version: 0 },
+                Some("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa".into()),
+            ),
+        )
+        .unwrap();
+        let lib = find(&diff, "src/lib.rs");
+        assert!(lib.base_fallback);
+        assert!(!lib.is_created);
+        assert_eq!(lib.change, ChangeKind::Modified);
     }
 
     #[test]

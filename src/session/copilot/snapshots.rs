@@ -27,6 +27,8 @@ use serde::Deserialize;
 
 use crate::domain::session::Backup;
 
+use super::super::paths::RepoPaths;
+
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Index {
     #[serde(default)]
@@ -68,12 +70,13 @@ pub fn parse(session_dir: &Path) -> Index {
 /// `base_commit` blob. Empty when the index records no base commit (→ the
 /// caller falls back to a plain working-tree diff).
 pub fn resolve(index: &Index, repo_root: &Path) -> HashMap<PathBuf, Backup> {
+    let paths = RepoPaths::new(repo_root);
     let mut out: HashMap<PathBuf, Backup> = HashMap::new();
     if index.base_commit().is_none() {
         return out;
     }
     for abs in index.file_path_map.values() {
-        if let Some(rel) = relativize(abs, repo_root) {
+        if let Some(rel) = paths.relativize(abs) {
             out.insert(
                 rel,
                 Backup {
@@ -84,19 +87,6 @@ pub fn resolve(index: &Index, repo_root: &Path) -> HashMap<PathBuf, Backup> {
         }
     }
     out
-}
-
-fn relativize(abs: &str, repo_root: &Path) -> Option<PathBuf> {
-    let p = Path::new(abs);
-    let abs = if p.is_absolute() {
-        p.to_path_buf()
-    } else {
-        repo_root.join(p)
-    };
-    abs.strip_prefix(repo_root)
-        .ok()
-        .filter(|r| !r.as_os_str().is_empty())
-        .map(Path::to_path_buf)
 }
 
 #[cfg(test)]

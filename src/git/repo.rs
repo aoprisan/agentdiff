@@ -53,6 +53,13 @@ impl Repo {
         }
     }
 
+    /// Whether `rev` resolves to an object in this repository. Lets the differ
+    /// tell a GC'd/rebased-away base commit apart from a file that simply
+    /// didn't exist at a still-reachable base.
+    pub fn rev_exists(&self, rev: &str) -> bool {
+        self.inner.revparse_single(rev).is_ok()
+    }
+
     /// The verbatim content of `rel_path` as of `rev` (a commit-ish), lossily
     /// decoded as UTF-8. `None` when the revision doesn't resolve or the path
     /// didn't exist there (e.g. an agent-created file) — the differ treats that

@@ -55,6 +55,14 @@ impl ReviewState {
         }
     }
 
+    /// Keep only the verdicts/notes whose `HunkRef` satisfies `keep`. Used to
+    /// garbage-collect entries for files that have left the diff (committed or
+    /// reverted) — without it the state file grows forever.
+    pub fn retain_refs<F: Fn(&HunkRef) -> bool>(&mut self, keep: F) {
+        self.verdicts.retain(|href, _| keep(href));
+        self.notes.retain(|href, _| keep(href));
+    }
+
     /// Serialize to human-diffable TOML via the flat DTO. Pure (no filesystem).
     pub fn to_toml(&self) -> std::result::Result<String, toml::ser::Error> {
         toml::to_string_pretty(&StoredReview::from_state(self))

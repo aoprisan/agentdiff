@@ -10,6 +10,7 @@ pub mod commands;
 pub mod copilot;
 pub mod intent;
 pub mod locate;
+pub mod paths;
 pub mod runs;
 pub mod transcript;
 
@@ -161,10 +162,15 @@ pub fn load_session(
 /// Pick the run to review: an explicit index when valid, else the most recent
 /// run that has resolvable backups, else the most recent run.
 fn select_run(runs: &[AgentRun], run_index: Option<u32>) -> Option<RunId> {
-    if let Some(n) = run_index
-        && (n as usize) < runs.len()
-    {
-        return Some(RunId(n));
+    if let Some(n) = run_index {
+        if (n as usize) < runs.len() {
+            return Some(RunId(n));
+        }
+        tracing::warn!(
+            requested = n,
+            available = runs.len(),
+            "--run index out of range; falling back to automatic run selection"
+        );
     }
     runs.iter()
         .rev()

@@ -117,6 +117,7 @@ It needs a real terminal (TTY). `agentdiff --help` prints the full CLI surface.
 | `e` | Open the file in `$VISUAL`/`$EDITOR` at the hunk's line |
 | `n` | Add / edit note (`Alt-Enter` for a new line) |
 | `s` | Session picker |
+| `r` | Run picker — re-scope the review to another run in this session |
 | `i` | Toggle intent detail |
 | `v` | Verification overlay (commands the agent ran + outcomes) |
 | `?` | Toggle help |
@@ -144,7 +145,7 @@ approve = "v"
 
 Overridable command names: `quit`, `help`, `cursor_down`, `cursor_up`,
 `next_file`, `prev_file`, `goto_bottom`, `toggle_collapse`, `approve`,
-`needs_attention`, `unset`, `session_picker`, `intent_detail`, `verification`,
+`needs_attention`, `unset`, `session_picker`, `run_picker`, `intent_detail`, `verification`,
 `edit_note`, `search`, `next_match`, `prev_match`, `open_editor`. (Ctrl-chords,
 two-key sequences, and special keys are fixed.)
 

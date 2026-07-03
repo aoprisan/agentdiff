@@ -54,9 +54,18 @@ pub fn run(args: Args, state_dir: PathBuf) -> anyhow::Result<()> {
         .clone()
         .unwrap_or_else(|| palette.syntax.to_string());
 
-    let selectors = Selectors::from_args(&args);
+    let mut selectors = Selectors::from_args(&args);
     let mut state = app::build_state(&repo, &state_dir, &dirs, &selectors)?;
     state.keymap = keymap.clone();
+
+    // Pin the loaded session: without an explicit id every re-diff would
+    // re-pick the newest transcript, so a second agent session writing to the
+    // same repo mid-review would silently swap the diff base under the user.
+    if selectors.session_id.is_none()
+        && let Some(session) = &state.session
+    {
+        selectors.session_id = Some(session.id.clone());
+    }
 
     install_panic_hook();
     let mut terminal = ratatui::init();
@@ -75,7 +84,7 @@ pub fn run(args: Args, state_dir: PathBuf) -> anyhow::Result<()> {
     ratatui::restore();
 
     // Persist after restoring so any write error surfaces on the real terminal.
-    save_review(&state);
+    final_save(&mut state);
     result
 }
 
@@ -155,6 +164,22 @@ fn event_loop(
             Ok(AppEvent::DiffReady { generation, bundle }) => {
                 if generation == state.generation {
                     let bundle = *bundle;
+                    // A re-diff can land on a different base (e.g. a new agent
+                    // run opened in the pinned session). Verdicts are keyed by
+                    // base, so persist the old checklist and load the new one.
+                    if bundle.diff.base != state.diff.base {
+                        final_save(state);
+                        let path = config::review_state_path(
+                            state_dir,
+                            repo.workdir(),
+                            &bundle.diff.base,
+                        );
+                        if path != state.state_path {
+                            state.review = config::load_review_state(&path);
+                            state.state_path = path;
+                            state.review_dirty = false;
+                        }
+                    }
                     state.apply_rediff(
                         bundle.diff,
                         bundle.intent,
@@ -170,6 +195,10 @@ fn event_loop(
             Err(RecvTimeoutError::Timeout) => update(state, AppEvent::Tick),
             Err(RecvTimeoutError::Disconnected) => break,
         }
+
+        // Autosave: a crash or SIGKILL must not lose a session's worth of
+        // verdicts. The state file is tiny and dirty only after a real change.
+        save_review(state);
 
         // `e`: hand the terminal to the user's editor, then take it back and
         // re-diff unconditionally — the watcher may debounce-miss a quick edit.
@@ -194,6 +223,16 @@ fn event_loop(
         if let Some(id) = state.pending_switch.take() {
             switch_session(state, repo, state_dir, &dirs, &mut selectors, id);
             // Reapply config that lives outside the rebuilt AppState / Highlighter.
+            state.keymap = keymap.clone();
+            *highlighter = Highlighter::with_theme(&syntax_theme);
+            _watch = spawn_watch(state, &dirs, repo.workdir(), tx.clone());
+        }
+
+        // `r` picker: re-scope the review to a different run of this session.
+        if let Some(run) = state.pending_run_switch.take() {
+            let mut new_selectors = selectors.clone();
+            new_selectors.run_index = Some(run);
+            rebuild(state, repo, state_dir, &dirs, &mut selectors, new_selectors);
             state.keymap = keymap.clone();
             *highlighter = Highlighter::with_theme(&syntax_theme);
             _watch = spawn_watch(state, &dirs, repo.workdir(), tx.clone());
@@ -233,7 +272,13 @@ fn spawn_worker(
                 return;
             }
         };
-        while let Ok(req) = req_rx.recv() {
+        while let Ok(mut req) = req_rx.recv() {
+            // Collapse a queued burst to the newest request — results for the
+            // older generations would be dropped on arrival anyway, so building
+            // them is pure wasted work while the agent is busy writing.
+            for newer in req_rx.try_iter() {
+                req = newer;
+            }
             match app::build_bundle(&repo, &dirs, &req.selectors) {
                 Ok(bundle) => {
                     let event = AppEvent::DiffReady {
@@ -257,7 +302,9 @@ fn spawn_watch(
     tx: Sender<AppEvent>,
 ) -> Option<crate::watch::Watch> {
     let session_file = active_session_file(state, dirs, workdir);
-    crate::watch::spawn(workdir, session_file, tx)
+    crate::watch::spawn(workdir, session_file, move || {
+        let _ = tx.send(AppEvent::FsChanged);
+    })
 }
 
 /// The transcript file of the loaded session, watched for live updates. Resolved
@@ -285,27 +332,60 @@ fn switch_session(
     selectors: &mut Selectors,
     session_id: String,
 ) {
-    save_review(state);
-    *selectors = Selectors {
+    let new_selectors = Selectors {
         provider: selectors.provider,
         no_session: false,
-        session_id: Some(session_id.clone()),
+        session_id: Some(session_id),
         run_index: None,
         range: None,
         staged: false,
     };
-    match app::build_state(repo, state_dir, dirs, selectors) {
-        Ok(new_state) => *state = new_state,
-        Err(e) => tracing::warn!(error = %e, session = session_id, "failed to switch session"),
+    rebuild(state, repo, state_dir, dirs, selectors, new_selectors);
+}
+
+/// Rebuild the whole `AppState` for new selectors (session or run switch),
+/// persisting the outgoing checklist first. On failure both the old state and
+/// the old selectors are kept, so future re-diffs still target what was
+/// actually loaded.
+fn rebuild(
+    state: &mut AppState,
+    repo: &Repo,
+    state_dir: &Path,
+    dirs: &AgentDirs,
+    selectors: &mut Selectors,
+    new_selectors: Selectors,
+) {
+    final_save(state);
+    match app::build_state(repo, state_dir, dirs, &new_selectors) {
+        Ok(mut new_state) => {
+            // Carry the generation forward past any in-flight worker result for
+            // the *old* selectors — resetting to 0 would let a stale bundle
+            // match a post-switch request and clobber the new state's diff.
+            new_state.generation = state.generation + 1;
+            *selectors = new_selectors;
+            *state = new_state;
+        }
+        Err(e) => tracing::warn!(error = %e, ?new_selectors, "failed to rebuild review state"),
     }
 }
 
-fn save_review(state: &AppState) {
-    if state.review_dirty
-        && let Err(e) = config::save_review_state(&state.state_path, &state.review)
-    {
-        tracing::warn!(error = %e, "failed to save review state");
+/// Write the review checklist if it changed. Pruning is separate (see
+/// [`final_save`]): autosaves run after every verdict, and pruning against a
+/// transient mid-rewrite diff could drop entries that are about to re-attach.
+fn save_review(state: &mut AppState) {
+    if state.review_dirty {
+        match config::save_review_state(&state.state_path, &state.review) {
+            Ok(()) => state.review_dirty = false,
+            Err(e) => tracing::warn!(error = %e, "failed to save review state"),
+        }
     }
+}
+
+/// Garbage-collect entries for files that left the diff, then save. Used when
+/// a review is being left behind for good: quit, session switch, base change.
+fn final_save(state: &mut AppState) {
+    state.prune_review();
+    save_review(state);
 }
 
 fn render(frame: &mut Frame, state: &AppState, highlighter: &mut Highlighter) {
@@ -329,6 +409,8 @@ fn render(frame: &mut Frame, state: &AppState, highlighter: &mut Highlighter) {
         widgets::search::render(frame, frame.area(), state);
     } else if state.show_picker {
         widgets::session_picker::render(frame, frame.area(), state);
+    } else if state.show_run_picker {
+        widgets::run_picker::render(frame, frame.area(), state);
     } else if state.show_verify {
         widgets::verification::render(frame, frame.area(), state);
     } else if state.show_help {
@@ -419,6 +501,7 @@ mod tests {
                 change: ChangeKind::Modified,
                 is_binary: false,
                 is_created: false,
+                base_fallback: false,
                 language: Some("rust".into()),
                 hunks: vec![hunk],
                 stats: (1, 1),
@@ -541,6 +624,8 @@ mod tests {
             base_label: "agent run 1/1 (acceptEdits)".into(),
             live: true,
             commands: sample_commands(),
+            verify_stale: false,
+            runs: Vec::new(),
         });
         state.intent.insert(
             PathBuf::from("src/main.rs"),
@@ -567,6 +652,8 @@ mod tests {
             base_label: "agent run 1/1 (acceptEdits)".into(),
             live: false,
             commands: sample_commands(),
+            verify_stale: false,
+            runs: Vec::new(),
         });
         state.show_verify = true;
         insta::assert_snapshot!(render_to_string(&state));
@@ -622,6 +709,31 @@ mod tests {
             },
         ];
         state.show_picker = true;
+        insta::assert_snapshot!(render_to_string(&state));
+    }
+
+    #[test]
+    fn renders_run_picker() {
+        use crate::app::RunListItem;
+
+        let mut state = sample_state();
+        state.session = Some(crate::app::state::SessionSummary {
+            runs: vec![
+                RunListItem {
+                    index: 0,
+                    label: "acceptEdits · 09:15 · 3 files".into(),
+                    is_current: false,
+                },
+                RunListItem {
+                    index: 1,
+                    label: "auto · 10:40 · 7 files".into(),
+                    is_current: true,
+                },
+            ],
+            ..Default::default()
+        });
+        state.show_run_picker = true;
+        state.run_picker_cursor = 1;
         insta::assert_snapshot!(render_to_string(&state));
     }
 }

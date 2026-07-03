@@ -27,9 +27,33 @@ pub enum Record {
     AiTitle(AiTitle),
     /// Documented (planner-verified) backup record; absent in some CC versions.
     FileHistorySnapshot(FileHistorySnapshot),
+    /// Standalone permission-mode record (`{"type":"permission-mode",...}`),
+    /// the documented segmentation signal on CC versions that don't put a
+    /// `permissionMode` field on every entry.
+    PermissionMode(ModeRecord),
+    /// Current CC versions write `{"type":"mode","mode":...}`. Its value
+    /// vocabulary overlaps UI modes (e.g. `"normal"`), so segmentation only
+    /// acts on values it positively recognizes as permission modes.
+    Mode(ModeRecord),
     /// Any other line type (attachments, queue ops, future additions).
     #[serde(other)]
     Other,
+}
+
+/// Body of a standalone mode record; the mode string has been seen under both
+/// `mode` and `permissionMode` keys.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ModeRecord {
+    #[serde(default)]
+    pub mode: Option<String>,
+    #[serde(rename = "permissionMode", default)]
+    pub permission_mode: Option<String>,
+}
+
+impl ModeRecord {
+    pub fn mode_str(&self) -> Option<&str> {
+        self.mode.as_deref().or(self.permission_mode.as_deref())
+    }
 }
 
 impl Record {
@@ -97,12 +121,16 @@ pub struct Message {
     pub content: Content,
 }
 
-/// Message content is either a bare string (user prompt) or a block list.
+/// Message content is either a bare string (user prompt) or a block list. The
+/// catch-all arm keeps a line with a drifted content shape (`null`, an object)
+/// parseable — its other fields, like `permissionMode`, still matter for
+/// segmentation even when the content is unusable.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(untagged)]
 pub enum Content {
     Text(String),
     Blocks(Vec<Block>),
+    Other(#[allow(dead_code)] serde_json::Value),
 }
 
 impl Default for Content {
@@ -324,6 +352,44 @@ mod tests {
             .unwrap();
         assert_eq!(text, "line one\nline two");
         assert_eq!(is_error, None);
+    }
+
+    #[test]
+    fn mode_records_parse_under_both_tags_and_key_spellings() {
+        let jsonl = concat!(
+            r#"{"type":"permission-mode","mode":"auto","sessionId":"s"}"#,
+            "\n",
+            r#"{"type":"mode","mode":"normal","sessionId":"s"}"#,
+            "\n",
+            r#"{"type":"permission-mode","permissionMode":"acceptEdits"}"#,
+        );
+        let records = parse_reader(jsonl.as_bytes());
+        assert_eq!(records.len(), 3);
+        let modes: Vec<_> = records
+            .iter()
+            .map(|r| match r {
+                Record::PermissionMode(m) | Record::Mode(m) => m.mode_str(),
+                _ => panic!("expected mode records"),
+            })
+            .collect();
+        assert_eq!(modes, vec![Some("auto"), Some("normal"), Some("acceptEdits")]);
+    }
+
+    #[test]
+    fn drifted_content_shapes_do_not_drop_the_line() {
+        // `content: null` (or an object) must not lose the line — its other
+        // fields (permissionMode) still drive run segmentation.
+        let jsonl = concat!(
+            r#"{"type":"user","uuid":"u1","permissionMode":"acceptEdits","message":{"content":null}}"#,
+            "\n",
+            r#"{"type":"user","uuid":"u2","message":{"content":{"weird":true}}}"#,
+        );
+        let records = parse_reader(jsonl.as_bytes());
+        assert_eq!(records.len(), 2);
+        let entry = records[0].as_entry().unwrap();
+        assert_eq!(entry.permission_mode.as_deref(), Some("acceptEdits"));
+        assert!(entry.blocks().is_empty());
+        assert!(entry.content_text().is_none());
     }
 
     #[test]

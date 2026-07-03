@@ -29,8 +29,9 @@ const EXCERPT_LINES: usize = 6;
 
 /// A one-line summary of the run's verification work for the Intent header:
 /// the latest of each verification kind, colored by outcome. `None` when the
-/// run ran no shell commands at all.
-pub fn summary_line(commands: &[CommandRun]) -> Option<Line<'static>> {
+/// run ran no shell commands at all. `stale` marks evidence that predates the
+/// run's last edit — a ✓ that proves nothing about the state under review.
+pub fn summary_line(commands: &[CommandRun], stale: bool) -> Option<Line<'static>> {
     if commands.is_empty() {
         return None;
     }
@@ -60,6 +61,13 @@ pub fn summary_line(commands: &[CommandRun]) -> Option<Line<'static>> {
             format!("ran {} command(s)", commands.len()),
             Style::default().fg(theme::gutter_fg()),
         ));
+    } else if stale {
+        spans.push(Span::styled(
+            "⟳ stale (edits after last check)",
+            Style::default()
+                .fg(theme::needs_attention_fg())
+                .add_modifier(Modifier::BOLD),
+        ));
     }
     Some(Line::from(spans))
 }
@@ -84,6 +92,14 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
             }
             lines.push(Line::from(""));
             lines.push(Line::styled(tally(cmds), Style::default().fg(theme::gutter_fg())));
+            if state.session.as_ref().is_some_and(|s| s.verify_stale) {
+                lines.push(Line::styled(
+                    "⟳ the last verification ran before the run's final edits",
+                    Style::default()
+                        .fg(theme::needs_attention_fg())
+                        .add_modifier(Modifier::BOLD),
+                ));
+            }
         }
         _ => lines.push(Line::styled(
             "The agent ran no shell commands during this run.",

@@ -13,46 +13,73 @@ use crate::domain::session::{CommandKind, CommandOutcome};
 /// Characters of result tail kept for the detail overlay.
 const EXCERPT_CHARS: usize = 600;
 
-/// Bucket a shell command by what it's for. Substring match on the lowercased
-/// command, in priority order so e.g. `cargo test` is Test, not Build. Compound
-/// commands (`a && b`) classify by the first signal found.
+/// Bucket a shell command by what it's for. Matches whole *tokens* of the
+/// command (quoted strings stripped first), in priority order so e.g.
+/// `cargo test` is Test, not Build. Substring matching misfired badly here:
+/// `git commit -m "add tests"` read as Test, `curl …/latest` matched "test".
+/// Compound commands (`a && b`) classify by the highest-priority signal found.
 pub fn classify(command: &str) -> CommandKind {
-    let c = command.to_ascii_lowercase();
-    let has = |needles: &[&str]| needles.iter().any(|n| c.contains(n));
+    let unquoted = strip_quoted(command).to_ascii_lowercase();
+    // Shell operators separate tokens just like whitespace; flags are dropped
+    // (`cargo build --tests` builds tests, it doesn't run them).
+    let tokens: Vec<&str> = unquoted
+        .split(|c: char| c.is_whitespace() || matches!(c, '&' | '|' | ';' | '(' | ')'))
+        .filter(|t| !t.is_empty() && !t.starts_with('-'))
+        .collect();
+    let has = |names: &[&str]| tokens.iter().any(|t| names.contains(t));
+    let pair = |a: &str, b: &str| tokens.windows(2).any(|w| w == [a, b]);
 
-    if has(&["test", "nextest", "pytest", "jest", "vitest", "go test"]) {
+    if has(&["test", "tests", "nextest", "pytest", "jest", "vitest", "ctest"]) {
         CommandKind::Test
-    } else if has(&["clippy", "eslint", "lint", "ruff", "go vet", "vet ", "shellcheck"]) {
+    } else if has(&["clippy", "eslint", "lint", "ruff", "vet", "shellcheck", "golangci-lint"]) {
         CommandKind::Lint
-    } else if has(&["fmt", "rustfmt", "prettier", "gofmt", "black "]) {
+    } else if has(&["fmt", "rustfmt", "prettier", "gofmt", "black"]) {
         CommandKind::Format
-    } else if has(&[
-        "build",
-        "cargo check",
-        "tsc",
-        "make",
-        "compile",
-        "mvn ",
-        "gradle",
-    ]) {
+    } else if has(&["build", "tsc", "make", "compile", "mvn", "gradle", "gradlew"])
+        || pair("cargo", "check")
+    {
         CommandKind::Build
-    } else if has(&["cargo run", "npm run", "npm start", "node ", "python ", "./"]) {
+    } else if has(&["node", "python", "python3"])
+        || pair("cargo", "run")
+        || pair("npm", "run")
+        || pair("npm", "start")
+        || tokens.first().is_some_and(|t| t.starts_with("./"))
+    {
         CommandKind::Run
-    } else if c.trim_start().starts_with("git ") || c.contains("&& git ") {
+    } else if has(&["git"]) {
         CommandKind::Vcs
     } else {
         CommandKind::Other
     }
 }
 
+/// Remove single/double-quoted spans so words inside a commit message or an
+/// argument string can't masquerade as command tokens.
+fn strip_quoted(command: &str) -> String {
+    let mut out = String::with_capacity(command.len());
+    let mut quote: Option<char> = None;
+    for c in command.chars() {
+        match quote {
+            Some(q) if c == q => quote = None,
+            Some(_) => {}
+            None if c == '\'' || c == '"' => quote = Some(c),
+            None => out.push(c),
+        }
+    }
+    out
+}
+
 /// Infer a command's outcome from its result. We trust an explicit tool-level
 /// error, then a non-zero `Exit code` line, then a small high-precision set of
 /// tool failure signals; absent any of those a captured result is treated as
-/// `Ok`. (`Unknown` is reserved for commands whose result was never seen and is
-/// set by the caller, not here.)
+/// `Ok`. A result whose content couldn't be read at all (empty, unknown shape)
+/// with no error flag stays `Unknown` — claiming ✓ on evidence we never saw is
+/// the wrong direction to be wrong in.
 pub fn outcome(is_error: Option<bool>, output: &str) -> CommandOutcome {
     if is_error == Some(true) || looks_failed(output) {
         CommandOutcome::Failed
+    } else if is_error.is_none() && output.trim().is_empty() {
+        CommandOutcome::Unknown
     } else {
         CommandOutcome::Ok
     }
@@ -65,6 +92,11 @@ fn looks_failed(output: &str) -> bool {
         || output.contains("could not compile")
         || output.contains("npm ERR!")
         || output.contains("Traceback (most recent call last)")
+        || output.contains("= FAILURES =") // pytest section banner
+        // jest/vitest summary: "Tests:       1 failed, 11 passed"
+        || output
+            .lines()
+            .any(|l| l.trim_start().starts_with("Tests:") && l.contains("failed"))
 }
 
 /// A `Exit code N` line (CC appends one for non-zero exits) with `N != 0`.
@@ -115,6 +147,43 @@ mod tests {
     fn test_beats_build_for_cargo_test() {
         // Must not be miscategorised as Build despite no "build" token.
         assert_eq!(classify("cargo test"), CommandKind::Test);
+    }
+
+    #[test]
+    fn classify_matches_tokens_not_substrings() {
+        // "tests" inside a commit message is not a test run.
+        assert_eq!(classify(r#"git commit -m "add tests""#), CommandKind::Vcs);
+        // "test" inside a URL is not a test run.
+        assert_eq!(classify("curl https://example.com/latest"), CommandKind::Other);
+        // A flag is not a command word: building tests ≠ running them.
+        assert_eq!(classify("cargo build --tests"), CommandKind::Build);
+        // Compound commands classify by the strongest signal.
+        assert_eq!(classify("cargo build && cargo test"), CommandKind::Test);
+        assert_eq!(classify("npm run lint"), CommandKind::Lint);
+    }
+
+    #[test]
+    fn outcome_without_evidence_is_unknown_not_ok() {
+        assert_eq!(outcome(None, ""), CommandOutcome::Unknown);
+        assert_eq!(outcome(None, "   \n"), CommandOutcome::Unknown);
+        // An explicit non-error flag with empty output is still a result.
+        assert_eq!(outcome(Some(false), ""), CommandOutcome::Ok);
+    }
+
+    #[test]
+    fn outcome_detects_pytest_and_jest_failures() {
+        assert_eq!(
+            outcome(None, "==================== FAILURES ====================\ntest_x"),
+            CommandOutcome::Failed
+        );
+        assert_eq!(
+            outcome(None, "Tests:       1 failed, 11 passed\nTime: 2s"),
+            CommandOutcome::Failed
+        );
+        assert_eq!(
+            outcome(None, "Tests:       12 passed\nTime: 2s"),
+            CommandOutcome::Ok
+        );
     }
 
     #[test]

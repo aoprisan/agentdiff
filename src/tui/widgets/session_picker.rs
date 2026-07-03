@@ -23,10 +23,19 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState) {
     frame.render_widget(block, popup);
 
     let usable = inner.width.saturating_sub(2) as usize;
+    // Window the list so the highlighted session stays visible when there are
+    // more sessions than popup rows (2 rows are reserved for the hint).
+    let visible = (inner.height.saturating_sub(2) as usize).max(1);
+    let start = state
+        .picker_cursor
+        .saturating_sub(visible - 1)
+        .min(state.sessions.len().saturating_sub(visible));
     let mut lines: Vec<Line> = state
         .sessions
         .iter()
         .enumerate()
+        .skip(start)
+        .take(visible)
         .map(|(i, item)| session_line(item, i == state.picker_cursor, usable))
         .collect();
     lines.push(Line::from(""));
