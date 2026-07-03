@@ -114,6 +114,12 @@ fn file_header(file: &FileChange) -> Line<'static> {
             Style::default().fg(theme::gutter_fg()),
         ));
     }
+    if file.base_fallback {
+        spans.push(Span::styled(
+            "  ⚠ pre-run base missing — diffed vs HEAD",
+            Style::default().fg(theme::needs_attention_fg()),
+        ));
+    }
     Line::from(spans)
 }
 

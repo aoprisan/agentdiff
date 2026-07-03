@@ -419,6 +419,7 @@ mod tests {
                 change: ChangeKind::Modified,
                 is_binary: false,
                 is_created: false,
+                base_fallback: false,
                 language: Some("rust".into()),
                 hunks: vec![hunk],
                 stats: (1, 1),

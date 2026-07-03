@@ -52,16 +52,43 @@ pub fn collect(repo: &Repo) -> Result<Vec<FileChange>> {
         if index.get_path(rel, 0).is_some() {
             continue;
         }
-        if let Some(change) = synth_created(abs, rel)? {
-            out.push(change);
+        // One unreadable file (permission-denied, vanished mid-walk) must not
+        // abort the whole diff — skip it like a failed walk entry.
+        match synth_created(abs, rel) {
+            Ok(Some(change)) => out.push(change),
+            Ok(None) => {}
+            Err(err) => {
+                tracing::warn!(path = %rel.display(), %err, "skipping unreadable untracked file");
+            }
         }
     }
     Ok(out)
 }
 
+/// Bytes sniffed from the head of a file to decide binary-ness before
+/// committing to reading the whole thing into memory.
+const BINARY_SNIFF_BYTES: usize = 8192;
+
 /// Build an "empty → content" `FileChange` for one created file.
 fn synth_created(abs: &Path, rel: &Path) -> Result<Option<FileChange>> {
-    let bytes = std::fs::read(abs)?;
+    use std::io::Read;
+
+    // Sniff the head for NUL first so a large binary artifact is classified
+    // without reading it fully.
+    let mut file = std::fs::File::open(abs)?;
+    let mut head = [0u8; BINARY_SNIFF_BYTES];
+    let mut filled = 0;
+    while filled < head.len() {
+        let n = file.read(&mut head[filled..])?;
+        if n == 0 {
+            break;
+        }
+        filled += n;
+    }
+    let mut bytes = head[..filled].to_vec();
+    if !bytes.contains(&0) && filled == head.len() {
+        file.read_to_end(&mut bytes)?;
+    }
 
     if bytes.contains(&0) {
         return Ok(Some(FileChange {
@@ -71,6 +98,7 @@ fn synth_created(abs: &Path, rel: &Path) -> Result<Option<FileChange>> {
             change: ChangeKind::Added,
             is_binary: true,
             is_created: true,
+            base_fallback: false,
             language: language_for(rel),
             hunks: Vec::new(),
             stats: (0, 0),
@@ -121,6 +149,7 @@ fn synth_created(abs: &Path, rel: &Path) -> Result<Option<FileChange>> {
         change: ChangeKind::Added,
         is_binary: false,
         is_created: true,
+        base_fallback: false,
         language: language_for(rel),
         hunks,
         stats: (added, 0),

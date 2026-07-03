@@ -436,6 +436,7 @@ mod tests {
                 change: ChangeKind::Modified,
                 is_binary: false,
                 is_created: false,
+                base_fallback: false,
                 language: Some("rust".into()),
                 hunks: vec![
                     hunk(1, "@@ -1,2 +1,2 @@ fn main()"),

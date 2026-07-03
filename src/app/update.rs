@@ -403,6 +403,7 @@ mod tests {
                 change: ChangeKind::Modified,
                 is_binary: false,
                 is_created: false,
+                base_fallback: false,
                 language: None,
                 hunks: vec![hunk(1), hunk(2), hunk(3)],
                 stats: (3, 0),

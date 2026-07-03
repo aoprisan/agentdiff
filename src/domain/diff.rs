@@ -86,6 +86,12 @@ pub struct FileChange {
     pub is_binary: bool,
     /// `true` when the agent created this file (no prior version existed).
     pub is_created: bool,
+    /// `true` when the intended pre-run base (a file-history backup or the
+    /// run's base-commit blob) was unavailable and the "before" side fell back
+    /// to `HEAD` (or empty). The diff is still shown, but labeled as degraded
+    /// rather than silently misrendered as an agent-created file.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub base_fallback: bool,
     pub language: Option<String>,
     pub hunks: Vec<Hunk>,
     /// `(added, removed)` line counts.
@@ -116,6 +122,7 @@ mod tests {
                 change: ChangeKind::Modified,
                 is_binary: false,
                 is_created: false,
+                base_fallback: false,
                 language: Some("rust".into()),
                 stats: (1, 1),
                 hunks: vec![Hunk {

@@ -391,6 +391,7 @@ mod tests {
                 change: ChangeKind::Modified,
                 is_binary: false,
                 is_created: false,
+                base_fallback: false,
                 language: Some("rust".into()),
                 hunks,
                 stats: (0, 0),
