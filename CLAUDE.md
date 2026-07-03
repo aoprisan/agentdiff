@@ -25,7 +25,7 @@ The implementation is delivered **one phase at a time**. The plan is the source 
 
 - Start at [`docs/plan/README.md`](docs/plan/README.md) (index + status), then [`docs/plan/00-overview.md`](docs/plan/00-overview.md) for the full architecture, stack, domain types, and risks.
 - Each `docs/plan/0N-phaseX-*.md` is self-contained: goal, in/out of scope, crates to add, ordered tasks, files touched, acceptance criteria. **Do not pull scope forward from a later phase.**
-- Phase 0 (skeleton + frozen domain types) is complete. Phase 1 (working-tree reviewer) is next. MVP = phases 0–2.
+- Phases 0–3 and 6 are **complete** (worktree reviewer, Claude Code per-run scoping + intent correlation, live re-diff, session picker, config, verification surfacing — plus a GitHub Copilot CLI provider, `--report`/`--report=json`, search, and editor jump-out beyond the original plan). Phase 4 (risk engine) is optional and next; Phase 5 (action layer) stays out of scope by the read-only decision.
 - These docs are mirrored from `~/.claude/plans/agentdiff/`. If you revise a phase mid-build, update the `docs/plan/` copy so the repo stays the source of truth.
 
 ## Architecture (the big picture)
@@ -33,8 +33,8 @@ The implementation is delivered **one phase at a time**. The plan is the source 
 **The `Diff` is the spine.** `git`/session producers build a `domain::Diff`; risk, intent, and review state all anchor onto the content-addressed `HunkRef` inside each hunk (a fingerprint, *not* a line number) so they re-attach across a live re-diff even as the tree changes underneath. The "before" source (`DiffBase`) only changes how a `Diff` is *built* — everything downstream is identical. The default base is the latest Claude Code **agent run** (diffing its pre-run file-history backups vs the working tree); it falls back to working-tree-vs-HEAD when no session is found.
 
 **Module dependency direction is strict and acyclic:**
-- `domain/` — pure types + pure transforms, **no I/O**. The contract every other module anchors to. (Currently annotated `#[allow(dead_code, unused_imports)]` because types are defined ahead of their producers; remove allowances as phases fill them in.)
-- `git/`, `session/`, `watch/` — depend only on `domain`. The only place libgit2 / filesystem / Claude-session parsing lives.
+- `domain/` — pure types + pure transforms, **no I/O**. The contract every other module anchors to. `domain::ids` is the **persisted** fingerprint hash (hand-rolled FNV-1a with a pinned-value test) — never swap in `DefaultHasher` or any unstable hasher.
+- `git/`, `session/`, `watch/` — depend only on `domain`. The only place libgit2 / filesystem / agent-session parsing lives. `session/` hosts one provider per submodule (Claude Code at the root, `copilot/`), both producing the same `SessionContext`. All recorded-path ↔ repo matching goes through `session::paths::RepoPaths` (symlink/`..`-tolerant) — never a raw `strip_prefix`.
 - `app/` — UI-framework-agnostic core: `AppState` + the single `(state, event)` reducer in `update.rs`. Orchestrates I/O modules via channels. No ratatui types leak out beyond the input `Event`.
 - `tui/` — ratatui rendering only; reads `AppState`, contains no business logic.
 
@@ -47,7 +47,7 @@ The implementation is delivered **one phase at a time**. The plan is the source 
 These data sources were verified to exist on disk; see `docs/plan/00-overview.md` and `03-phase2-cc-integration.md` for specifics:
 - Transcripts: `~/.claude/projects/<slug>/<session-uuid>.jsonl` (`slug` = absolute cwd with `/` and `.` → `-`).
 - Pre-edit file content: `~/.claude/file-history/<session-uuid>/<backupFileName>`.
-- `permission-mode` records segment autonomous runs (`auto`); `file-history-snapshot` records accumulate files as the run first touches them, but a **later snapshot re-baselines an already-edited file at its current content** under a higher `@vN` version — so the pre-run content is each file's **earliest (lowest-version) backup** within the span, *not* the latest snapshot (taking the latest diffs every file against its post-edit state → an empty diff for the whole run). `trackedFileBackups` path keys may be absolute and point outside the repo (normalize + drop out-of-repo entries).
+- Run segmentation reads the `permissionMode` **field** on `user`/`assistant` entries *and* standalone `permission-mode`/`mode` records — but standalone records only act on positively recognized values (current CC emits `{"type":"mode","mode":"normal"}` whose vocabulary is UI modes, which must not close a run); `file-history-snapshot` records accumulate files as the run first touches them, but a **later snapshot re-baselines an already-edited file at its current content** under a higher `@vN` version — so the pre-run content is each file's **earliest (lowest-version) backup** within the span, *not* the latest snapshot (taking the latest diffs every file against its post-edit state → an empty diff for the whole run). `trackedFileBackups` path keys may be absolute and point outside the repo (normalize + drop out-of-repo entries).
 - Agent intent is **not** colocated with an edit — recover it by walking the transcript's `parentUuid` chain up to the nearest preceding `assistant` text turn.
 - Treat all session data as **advisory**: git is always the source of truth, and the tool must stay useful (Phase 1 behavior) when parsing yields nothing. Confine format knowledge to `session/` behind a tagged-enum parser with an `Other` fallback.
 
@@ -55,7 +55,8 @@ These data sources were verified to exist on disk; see `docs/plan/00-overview.md
 
 - **ratatui 0.30** is the resolved version (split into `ratatui-core`/`ratatui-crossterm`/etc.). Use the `ratatui::crossterm` re-export — do **not** add a standalone `crossterm` dependency (version mismatch). `ratatui::init()` / `ratatui::restore()` manage the terminal; `restore()` returns `()` (no `let _ =`). A panic hook in `tui::mod.rs` restores the terminal on panic from any thread — keep it.
 - **Never log to stdout/stderr while the alternate screen is active.** `tracing` is wired to an append-only file under the platform data dir (`config::paths`).
-- `ReviewState` uses `HunkRef`-keyed `HashMap`s; serializing those to TOML/JSON needs a string-key encoding (the maps compile but error at runtime with struct keys). This is deferred to Phase 1 persistence — handle it there.
+- `ReviewState` uses `HunkRef`-keyed `HashMap`s; TOML has no struct keys, so persistence goes through the flat `StoredReview` array-of-tables DTO in `domain/review.rs` — don't serialize the maps directly.
+- The session picker/live-rediff path calls `locate::peek_meta`, which caches per-transcript metadata by mtime — bypassing it to re-scan transcripts on every rebuild reintroduces an O(all history) cost at 4 Hz during live runs.
 
 ## Conventions
 

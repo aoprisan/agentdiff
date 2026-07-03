@@ -292,7 +292,9 @@ fn spawn_watch(
     tx: Sender<AppEvent>,
 ) -> Option<crate::watch::Watch> {
     let session_file = active_session_file(state, dirs, workdir);
-    crate::watch::spawn(workdir, session_file, tx)
+    crate::watch::spawn(workdir, session_file, move || {
+        let _ = tx.send(AppEvent::FsChanged);
+    })
 }
 
 /// The transcript file of the loaded session, watched for live updates. Resolved

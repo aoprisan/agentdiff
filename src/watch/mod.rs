@@ -1,19 +1,17 @@
-//! Filesystem watchers that feed `AppEvent::FsChanged` into the event loop.
+//! Filesystem watchers that signal "something under review changed".
 //!
 //! Watches the working tree (recursively) and the active session transcript,
 //! debouncing bursty agent writes. Tree events are filtered through the repo's
 //! gitignore (and `.git` is always skipped) so build artifacts and git's own
-//! churn don't trigger spurious re-diffs.
+//! churn don't trigger spurious re-diffs. Change notification is a plain
+//! callback so this module depends only on `domain`-level concepts, not `app`.
 
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use crossbeam_channel::Sender;
 use ignore::gitignore::{Gitignore, GitignoreBuilder};
 use notify::{RecommendedWatcher, RecursiveMode};
 use notify_debouncer_full::{DebounceEventResult, Debouncer, RecommendedCache, new_debouncer};
-
-use crate::app::AppEvent;
 
 /// Debounce window for coalescing bursty writes during an agent run.
 const DEBOUNCE: Duration = Duration::from_millis(250);
@@ -21,10 +19,15 @@ const DEBOUNCE: Duration = Duration::from_millis(250);
 /// The watcher guard. Dropping it stops watching, so the caller must keep it.
 pub type Watch = Debouncer<RecommendedWatcher, RecommendedCache>;
 
-/// Start watching `workdir` and (optionally) the active transcript. Returns
-/// `None` if the platform watcher can't be created (watching is best-effort;
-/// the tool stays fully usable without it).
-pub fn spawn(workdir: &Path, session_file: Option<PathBuf>, tx: Sender<AppEvent>) -> Option<Watch> {
+/// Start watching `workdir` and (optionally) the active transcript, invoking
+/// `on_change` after each debounced burst of relevant changes. Returns `None`
+/// if the platform watcher can't be created (watching is best-effort; the tool
+/// stays fully usable without it).
+pub fn spawn(
+    workdir: &Path,
+    session_file: Option<PathBuf>,
+    on_change: impl Fn() + Send + 'static,
+) -> Option<Watch> {
     let gitignore = build_gitignore(workdir);
     let root = workdir.to_path_buf();
     let session = session_file.clone();
@@ -36,7 +39,7 @@ pub fn spawn(workdir: &Path, session_file: Option<PathBuf>, tx: Sender<AppEvent>
             .flat_map(|e| e.paths.iter())
             .any(|p| is_relevant(p, &root, &gitignore, session.as_deref()));
         if relevant {
-            let _ = tx.send(AppEvent::FsChanged);
+            on_change();
         }
     };
 
