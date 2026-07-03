@@ -18,7 +18,8 @@ use crate::tui::theme;
 
 pub fn render(frame: &mut Frame, area: Rect, state: &AppState, hl: &mut Highlighter) {
     let title = format!(
-        " Diff — working tree vs HEAD ({} file{}) ",
+        " Diff — {} ({} file{}) ",
+        base_title(&state.diff.base),
         state.diff.files.len(),
         if state.diff.files.len() == 1 { "" } else { "s" }
     );
@@ -27,7 +28,7 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, hl: &mut Highligh
     frame.render_widget(block, area);
 
     if state.flat.is_empty() {
-        let msg = Paragraph::new("No changes in the working tree.")
+        let msg = Paragraph::new("No changes to review.")
             .alignment(Alignment::Center)
             .style(Style::default().fg(theme::gutter_fg()));
         frame.render_widget(msg, inner);
@@ -48,6 +49,20 @@ pub fn render(frame: &mut Frame, area: Rect, state: &AppState, hl: &mut Highligh
     }
 
     frame.render_widget(Paragraph::new(lines), inner);
+}
+
+/// What the diff was actually built against — the pane title must not claim
+/// "working tree vs HEAD" for an agent-run or staged base.
+fn base_title(base: &crate::domain::diff::DiffBase) -> String {
+    use crate::domain::diff::DiffBase;
+    match base {
+        DiffBase::WorkingTreeVsHead => "working tree vs HEAD".to_string(),
+        DiffBase::WorkingTreeVsIndex => "staged vs HEAD".to_string(),
+        DiffBase::Range { from, to } => format!("{from}..{to}"),
+        DiffBase::AgentRun { run, .. } => {
+            format!("agent run {} vs working tree", run.0 + 1)
+        }
+    }
 }
 
 /// Widest line number across the diff, clamped to a sane range, for gutter sizing.

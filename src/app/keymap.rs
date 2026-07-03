@@ -49,9 +49,12 @@ impl Keymap {
 
         let ctrl = key.modifiers.contains(KeyModifiers::CONTROL);
 
-        // Config overrides apply to plain (non-ctrl) character keys.
+        // Config overrides apply to plain (non-ctrl) character keys — except
+        // the leader keys, which must keep starting their chords (`gg`, `]c`):
+        // an override on `g` would otherwise silently break them.
         if !ctrl
             && let KeyCode::Char(c) = key.code
+            && !matches!(c, 'g' | ']' | '[')
             && let Some(&cmd) = self.overrides.get(&c)
         {
             return Resolved::Command(cmd);

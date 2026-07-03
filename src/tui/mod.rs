@@ -84,7 +84,7 @@ pub fn run(args: Args, state_dir: PathBuf) -> anyhow::Result<()> {
     ratatui::restore();
 
     // Persist after restoring so any write error surfaces on the real terminal.
-    save_review(&mut state);
+    final_save(&mut state);
     result
 }
 
@@ -168,7 +168,7 @@ fn event_loop(
                     // run opened in the pinned session). Verdicts are keyed by
                     // base, so persist the old checklist and load the new one.
                     if bundle.diff.base != state.diff.base {
-                        save_review(state);
+                        final_save(state);
                         let path = config::review_state_path(
                             state_dir,
                             repo.workdir(),
@@ -195,6 +195,10 @@ fn event_loop(
             Err(RecvTimeoutError::Timeout) => update(state, AppEvent::Tick),
             Err(RecvTimeoutError::Disconnected) => break,
         }
+
+        // Autosave: a crash or SIGKILL must not lose a session's worth of
+        // verdicts. The state file is tiny and dirty only after a real change.
+        save_review(state);
 
         // `e`: hand the terminal to the user's editor, then take it back and
         // re-diff unconditionally — the watcher may debounce-miss a quick edit.
@@ -316,7 +320,7 @@ fn switch_session(
     selectors: &mut Selectors,
     session_id: String,
 ) {
-    save_review(state);
+    final_save(state);
     let new_selectors = Selectors {
         provider: selectors.provider,
         no_session: false,
@@ -340,14 +344,23 @@ fn switch_session(
     }
 }
 
+/// Write the review checklist if it changed. Pruning is separate (see
+/// [`final_save`]): autosaves run after every verdict, and pruning against a
+/// transient mid-rewrite diff could drop entries that are about to re-attach.
 fn save_review(state: &mut AppState) {
-    state.prune_review();
     if state.review_dirty {
         match config::save_review_state(&state.state_path, &state.review) {
             Ok(()) => state.review_dirty = false,
             Err(e) => tracing::warn!(error = %e, "failed to save review state"),
         }
     }
+}
+
+/// Garbage-collect entries for files that left the diff, then save. Used when
+/// a review is being left behind for good: quit, session switch, base change.
+fn final_save(state: &mut AppState) {
+    state.prune_review();
+    save_review(state);
 }
 
 fn render(frame: &mut Frame, state: &AppState, highlighter: &mut Highlighter) {

@@ -191,14 +191,29 @@ fn summarize(ctx: &SessionContext, base: &DiffBase) -> SessionSummary {
         title: ctx.session.title.clone(),
         last_prompt: ctx.session.last_prompt.clone(),
         base_label,
-        // A run that never closed (no following non-autonomous turn) is still running.
-        live: ctx.selected().is_some_and(|r| r.ended.is_none()),
+        // A run that never closed (no following non-autonomous turn) reads as
+        // still running — but quitting the agent mid-acceptEdits leaves the
+        // span open forever, so "live" additionally requires the transcript to
+        // have been written to recently.
+        live: ctx.selected().is_some_and(|r| r.ended.is_none())
+            && recently_modified(&ctx.session.file),
         // The commands the selected run ran, for the verification badge/overlay.
         commands: ctx
             .selected()
             .map(|r| r.commands.clone())
             .unwrap_or_default(),
     }
+}
+
+/// How stale a transcript may be while its open run still counts as live.
+const LIVE_STALENESS: std::time::Duration = std::time::Duration::from_secs(300);
+
+fn recently_modified(path: &Path) -> bool {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .map(|t| t.elapsed().map_or(true, |age| age < LIVE_STALENESS))
+        .unwrap_or(false)
 }
 
 fn mode_label(mode: PermissionMode) -> &'static str {
