@@ -20,6 +20,7 @@ use crate::domain::diff::{Diff, LineKind};
 use crate::domain::review::HunkRef;
 use crate::domain::session::Intent;
 
+use super::paths::RepoPaths;
 use super::transcript::{Record, edit_tool};
 
 /// Repo-relative path → recovered intent (per-file fallback).
@@ -54,6 +55,7 @@ pub fn build(records: &[Record], repo_root: &Path) -> IntentMap {
 
 /// Every in-repo edit with recoverable intent, in transcript order.
 pub fn edit_intents(records: &[Record], repo_root: &Path) -> Vec<EditIntent> {
+    let paths = RepoPaths::new(repo_root);
     let by_uuid: HashMap<&str, &Record> = records
         .iter()
         .filter_map(|r| Some((r.as_entry()?.uuid.as_deref()?, r)))
@@ -74,7 +76,7 @@ pub fn edit_intents(records: &[Record], repo_root: &Path) -> Vec<EditIntent> {
             let Some(path_str) = input.get("file_path").and_then(|v| v.as_str()) else {
                 continue;
             };
-            let Some(rel) = relativize(path_str, repo_root) else {
+            let Some(rel) = paths.relativize(path_str) else {
                 continue; // edit outside the repo
             };
             if let Some((text, source_uuid, hops)) = walk_to_intent(record, &by_uuid) {
@@ -204,19 +206,6 @@ fn walk_to_intent(
 
 fn confidence(hops: usize) -> f32 {
     (1.0 - 0.1 * hops as f32).clamp(0.3, 1.0)
-}
-
-fn relativize(path_str: &str, repo_root: &Path) -> Option<PathBuf> {
-    let p = Path::new(path_str);
-    let abs = if p.is_absolute() {
-        p.to_path_buf()
-    } else {
-        repo_root.join(p)
-    };
-    abs.strip_prefix(repo_root)
-        .ok()
-        .filter(|r| !r.as_os_str().is_empty())
-        .map(Path::to_path_buf)
 }
 
 #[cfg(test)]

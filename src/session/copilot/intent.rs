@@ -13,6 +13,7 @@ use std::path::{Path, PathBuf};
 
 use crate::domain::session::Intent;
 
+use super::super::paths::RepoPaths;
 use super::events::{RawEvent, edit_path, edit_tool};
 
 /// Repo-relative path → recovered intent.
@@ -23,6 +24,7 @@ const MAX_HOPS: usize = 25;
 
 /// Build the intent map for a parsed Copilot session, relative to `repo_root`.
 pub fn build(events: &[RawEvent], repo_root: &Path) -> IntentMap {
+    let paths = RepoPaths::new(repo_root);
     let by_id: HashMap<&str, &RawEvent> = events
         .iter()
         .filter_map(|e| Some((e.id.as_deref()?, e)))
@@ -50,7 +52,7 @@ pub fn build(events: &[RawEvent], repo_root: &Path) -> IntentMap {
         let Some(path_str) = edit_path(args) else {
             continue;
         };
-        let Some(rel) = relativize(path_str, repo_root) else {
+        let Some(rel) = paths.relativize(path_str) else {
             continue; // edit outside the repo
         };
 
@@ -96,19 +98,6 @@ fn walk_to_intent(
 
 fn confidence(hops: usize) -> f32 {
     (1.0 - 0.1 * hops as f32).clamp(0.3, 1.0)
-}
-
-fn relativize(path_str: &str, repo_root: &Path) -> Option<PathBuf> {
-    let p = Path::new(path_str);
-    let abs = if p.is_absolute() {
-        p.to_path_buf()
-    } else {
-        repo_root.join(p)
-    };
-    abs.strip_prefix(repo_root)
-        .ok()
-        .filter(|r| !r.as_os_str().is_empty())
-        .map(Path::to_path_buf)
 }
 
 #[cfg(test)]

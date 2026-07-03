@@ -10,6 +10,7 @@ pub mod commands;
 pub mod copilot;
 pub mod intent;
 pub mod locate;
+pub mod paths;
 pub mod runs;
 pub mod transcript;
 

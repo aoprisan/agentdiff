@@ -107,6 +107,16 @@ pub fn segment(records: &[Record]) -> Segmentation {
         {
             mode = parse_mode(m);
         }
+        // Standalone mode records too — but only for values positively
+        // recognized as permission modes. `mode` records share their tag with
+        // UI modes (`"normal"`), which must not close a run that per-entry
+        // `permissionMode` fields say is still autonomous.
+        if let Record::PermissionMode(m) | Record::Mode(m) = record
+            && let Some(s) = m.mode_str()
+            && let Some(parsed) = parse_known_mode(s)
+        {
+            mode = parsed;
+        }
 
         if !is_autonomous(mode) {
             if let Some(run) = open.take() {
@@ -198,12 +208,21 @@ pub fn segment(records: &[Record]) -> Segmentation {
 }
 
 pub fn parse_mode(mode: &str) -> PermissionMode {
-    match mode {
+    parse_known_mode(mode).unwrap_or(PermissionMode::Default)
+}
+
+/// Strictly-recognized permission-mode values; `None` for anything else (an
+/// unknown value must not silently close or open a run).
+fn parse_known_mode(mode: &str) -> Option<PermissionMode> {
+    Some(match mode {
         "auto" => PermissionMode::Auto,
+        // The most autonomous local mode of all — segment it like `auto`.
+        "bypassPermissions" => PermissionMode::Auto,
         "acceptEdits" => PermissionMode::AcceptEdits,
         "plan" => PermissionMode::Plan,
-        _ => PermissionMode::Default,
-    }
+        "default" => PermissionMode::Default,
+        _ => return None,
+    })
 }
 
 fn is_autonomous(mode: PermissionMode) -> bool {
@@ -266,6 +285,50 @@ mod tests {
         assert_eq!(a.backup_file_name.as_deref(), Some("a.rs@v1"));
         // A file first seen in the later snapshot is still picked up.
         assert_eq!(backups["/repo/b.rs"].version, 1);
+    }
+
+    #[test]
+    fn standalone_permission_mode_records_segment_runs() {
+        // Some CC versions emit standalone `permission-mode` records instead of
+        // a per-entry `permissionMode` field.
+        let jsonl = r#"
+{"type":"permission-mode","mode":"auto"}
+{"type":"assistant","uuid":"a1","timestamp":"2026-01-01T00:00:05Z","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/repo/a.rs"}}]}}
+{"type":"permission-mode","mode":"default"}
+{"type":"assistant","uuid":"a2","timestamp":"2026-01-01T00:01:05Z","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/repo/b.rs"}}]}}
+"#;
+        let seg = segment(&parse_reader(jsonl.as_bytes()));
+        assert_eq!(seg.runs.len(), 1);
+        assert_eq!(seg.runs[0].mode, PermissionMode::Auto);
+        // Only the edit inside the span is collected.
+        assert_eq!(seg.runs[0].edits.len(), 1);
+        assert!(seg.runs[0].ended.is_some(), "closed by the default record");
+    }
+
+    #[test]
+    fn unrecognized_mode_records_do_not_close_a_run() {
+        // Current CC writes `{"type":"mode","mode":"normal"}` records whose
+        // vocabulary is UI modes, alongside `permissionMode` entry fields.
+        // "normal" must not terminate the autonomous span.
+        let jsonl = r#"
+{"type":"user","uuid":"u1","permissionMode":"auto","timestamp":"2026-01-01T00:00:00Z","message":{"content":"go"}}
+{"type":"mode","mode":"normal"}
+{"type":"assistant","uuid":"a1","timestamp":"2026-01-01T00:00:05Z","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/repo/a.rs"}}]}}
+"#;
+        let seg = segment(&parse_reader(jsonl.as_bytes()));
+        assert_eq!(seg.runs.len(), 1);
+        assert_eq!(seg.runs[0].edits.len(), 1, "edit after the mode record is in-span");
+    }
+
+    #[test]
+    fn bypass_permissions_is_autonomous() {
+        let jsonl = r#"
+{"type":"user","uuid":"u1","permissionMode":"bypassPermissions","timestamp":"2026-01-01T00:00:00Z","message":{"content":"go"}}
+{"type":"assistant","uuid":"a1","timestamp":"2026-01-01T00:00:05Z","message":{"content":[{"type":"tool_use","name":"Edit","input":{"file_path":"/repo/a.rs"}}]}}
+"#;
+        let seg = segment(&parse_reader(jsonl.as_bytes()));
+        assert_eq!(seg.runs.len(), 1);
+        assert_eq!(seg.runs[0].mode, PermissionMode::Auto);
     }
 
     #[test]

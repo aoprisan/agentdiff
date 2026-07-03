@@ -227,12 +227,12 @@ fn session_items(
             locate::list_sessions(dir, cwd)
                 .into_iter()
                 .map(|entry| {
-                    let label = locate::peek_label(&entry.path);
+                    let meta = locate::peek_meta(&entry.path);
                     SessionListItem {
                         is_current: current_id == Some(entry.id.0.as_str()),
                         id: entry.id.0,
-                        title: label.title,
-                        last_prompt: label.last_prompt,
+                        title: meta.title,
+                        last_prompt: meta.last_prompt,
                     }
                 })
                 .collect()

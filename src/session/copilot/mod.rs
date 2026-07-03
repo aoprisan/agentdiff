@@ -25,6 +25,7 @@ use std::time::SystemTime;
 use crate::domain::Timestamp;
 use crate::domain::session::{AgentRun, AgentSession, Provider, RunId, SessionId};
 
+use super::paths::RepoPaths;
 use super::{SessionContext, locate, select_run};
 
 /// The default `~/.copilot` directory, if a home directory can be resolved.
@@ -53,7 +54,7 @@ pub fn list_sessions(copilot_dir: &Path, repo_root: &Path) -> Vec<SessionEntry> 
     let Ok(entries) = std::fs::read_dir(&root) else {
         return Vec::new();
     };
-    let target = normalize(repo_root);
+    let target = RepoPaths::new(repo_root);
 
     let mut sessions: Vec<SessionEntry> = entries
         .filter_map(|e| e.ok())
@@ -184,26 +185,13 @@ fn read_repo_identity(events_path: &Path) -> Option<(Option<String>, Option<Stri
     None
 }
 
-/// Whether a session's recorded `cwd`/`git_root` belongs to `target` (the
-/// normalized repo root): an exact `git_root`/`cwd` match, or a `cwd` nested
-/// inside the repo.
-fn matches_repo(target: &str, cwd: Option<&str>, git_root: Option<&str>) -> bool {
-    if git_root.map(normalize).as_deref() == Some(target) {
+/// Whether a session's recorded `cwd`/`git_root` belongs to the repo: an exact
+/// `git_root`/`cwd` match (symlink-tolerant), or a `cwd` nested inside it.
+fn matches_repo(target: &RepoPaths, cwd: Option<&str>, git_root: Option<&str>) -> bool {
+    if git_root.is_some_and(|g| target.matches_root(g)) {
         return true;
     }
-    match cwd.map(normalize) {
-        Some(c) => c == target || c.starts_with(&format!("{target}/")),
-        None => false,
-    }
-}
-
-/// Strip a trailing separator so paths from git2 (`workdir()` ends in `/`) and
-/// Copilot (no trailing `/`) compare equal.
-fn normalize(p: impl AsRef<Path>) -> String {
-    p.as_ref()
-        .to_string_lossy()
-        .trim_end_matches('/')
-        .to_string()
+    cwd.is_some_and(|c| target.contains(c))
 }
 
 #[cfg(test)]
@@ -223,11 +211,12 @@ mod tests {
 
     #[test]
     fn matches_repo_by_git_root_or_nested_cwd() {
-        assert!(matches_repo("/repo", Some("/repo"), Some("/repo")));
-        assert!(matches_repo("/repo", Some("/repo/src"), Some("/repo")));
-        assert!(matches_repo("/repo", Some("/repo"), None));
-        assert!(!matches_repo("/repo", Some("/other"), Some("/other")));
-        assert!(!matches_repo("/repo", Some("/repository"), None));
+        let target = RepoPaths::new(Path::new("/repo"));
+        assert!(matches_repo(&target, Some("/repo"), Some("/repo")));
+        assert!(matches_repo(&target, Some("/repo/src"), Some("/repo")));
+        assert!(matches_repo(&target, Some("/repo"), None));
+        assert!(!matches_repo(&target, Some("/other"), Some("/other")));
+        assert!(!matches_repo(&target, Some("/repository"), None));
     }
 
     #[test]
