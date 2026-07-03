@@ -54,9 +54,18 @@ pub fn run(args: Args, state_dir: PathBuf) -> anyhow::Result<()> {
         .clone()
         .unwrap_or_else(|| palette.syntax.to_string());
 
-    let selectors = Selectors::from_args(&args);
+    let mut selectors = Selectors::from_args(&args);
     let mut state = app::build_state(&repo, &state_dir, &dirs, &selectors)?;
     state.keymap = keymap.clone();
+
+    // Pin the loaded session: without an explicit id every re-diff would
+    // re-pick the newest transcript, so a second agent session writing to the
+    // same repo mid-review would silently swap the diff base under the user.
+    if selectors.session_id.is_none()
+        && let Some(session) = &state.session
+    {
+        selectors.session_id = Some(session.id.clone());
+    }
 
     install_panic_hook();
     let mut terminal = ratatui::init();
@@ -155,6 +164,22 @@ fn event_loop(
             Ok(AppEvent::DiffReady { generation, bundle }) => {
                 if generation == state.generation {
                     let bundle = *bundle;
+                    // A re-diff can land on a different base (e.g. a new agent
+                    // run opened in the pinned session). Verdicts are keyed by
+                    // base, so persist the old checklist and load the new one.
+                    if bundle.diff.base != state.diff.base {
+                        save_review(state);
+                        let path = config::review_state_path(
+                            state_dir,
+                            repo.workdir(),
+                            &bundle.diff.base,
+                        );
+                        if path != state.state_path {
+                            state.review = config::load_review_state(&path);
+                            state.state_path = path;
+                            state.review_dirty = false;
+                        }
+                    }
                     state.apply_rediff(
                         bundle.diff,
                         bundle.intent,
@@ -233,7 +258,13 @@ fn spawn_worker(
                 return;
             }
         };
-        while let Ok(req) = req_rx.recv() {
+        while let Ok(mut req) = req_rx.recv() {
+            // Collapse a queued burst to the newest request — results for the
+            // older generations would be dropped on arrival anyway, so building
+            // them is pure wasted work while the agent is busy writing.
+            for newer in req_rx.try_iter() {
+                req = newer;
+            }
             match app::build_bundle(&repo, &dirs, &req.selectors) {
                 Ok(bundle) => {
                     let event = AppEvent::DiffReady {
@@ -286,7 +317,7 @@ fn switch_session(
     session_id: String,
 ) {
     save_review(state);
-    *selectors = Selectors {
+    let new_selectors = Selectors {
         provider: selectors.provider,
         no_session: false,
         session_id: Some(session_id.clone()),
@@ -294,8 +325,17 @@ fn switch_session(
         range: None,
         staged: false,
     };
-    match app::build_state(repo, state_dir, dirs, selectors) {
-        Ok(new_state) => *state = new_state,
+    match app::build_state(repo, state_dir, dirs, &new_selectors) {
+        Ok(mut new_state) => {
+            // Carry the generation forward past any in-flight worker result for
+            // the *old* session — resetting to 0 would let a stale bundle match
+            // a post-switch request and clobber the new session's diff.
+            new_state.generation = state.generation + 1;
+            *selectors = new_selectors;
+            *state = new_state;
+        }
+        // On failure keep both the old state and the old selectors, so future
+        // re-diffs still target the session that was actually loaded.
         Err(e) => tracing::warn!(error = %e, session = session_id, "failed to switch session"),
     }
 }
